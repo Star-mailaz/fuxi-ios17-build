@@ -50,11 +50,8 @@ jobs:
           git clone --depth 1 https://github.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17 kerfand
           cp -R kerfand/device device
           cp -R kerfand/ios17 device-ios17
-          rm -rf device/drivers/QcomXnuUsbDebug
-          git clone --quiet https://github.com/xiaoleGun/QcomXnuUsbDebug.git device/drivers/QcomXnuUsbDebug
-          git -C device/drivers/QcomXnuUsbDebug fetch -q --depth 1 origin 83be5782ad7227d7d245862ce1ae3272cae14242
-          git -C device/drivers/QcomXnuUsbDebug checkout -q 83be5782ad7227d7d245862ce1ae3272cae14242
-          git -C device/drivers/QcomXnuUsbDebug rev-parse HEAD
+          test -f device/drivers/QcomXnuUsbDebug/kernel/QcomUsbControl.h
+          grep -c SXNU_CONTROL_VERB_REBOOT_FASTBOOT device/drivers/QcomXnuUsbDebug/kernel/QcomUsbControl.h
 
       - name: Restore the Linux XNU toolchain
         id: tc-cache
