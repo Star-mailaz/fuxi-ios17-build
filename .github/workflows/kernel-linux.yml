@@ -1,0 +1,203 @@
+name: kernel-linux
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: arm64e kernel for 21H16
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    env:
+      UNIXNU_OUT: ${{ github.workspace }}/work/unixnu/out-ios17
+      UNIXNU_XNU_ARCH: arm64e
+      UNIXNU_FILESET_KERNEL_FIRST: "1"
+      XNU_KERNEL_CHAINED_FIXUPS: "1"
+      JOBS: "8"
+      PYTHONUNBUFFERED: "1"
+      XNU_LINUX_PREFIX: /home/runner/xnu-linux
+      UNIXNU_TOOLCHAIN: /home/runner/xnu-linux
+      # The archive scripts import kernel_target.py from the UniXNU scripts directory,
+      # but they run from the assembled tree (device side), which is not on sys.path.
+      PYTHONPATH: ${{ github.workspace }}/work/unixnu/scripts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: work
+
+      - name: Linux toolchain
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq git cmake make clang python3 python3-pip flex bison \
+            autoconf automake pkg-config uuid-dev zlib1g-dev libssl-dev libbz2-dev liblzma-dev \
+            unzip p7zip-full tcsh unifdef
+          git clone --depth 1 https://github.com/Allenwdk/xnu-linux-toolchain "$GITHUB_WORKSPACE/tc"
+          "$GITHUB_WORKSPACE/tc/bootstrap.sh" --prefix "$XNU_LINUX_PREFIX" --jobs 8
+          ls "$XNU_LINUX_PREFIX/bin" | head -20
+
+      - name: Clone UniXNU and the author repository
+        working-directory: work
+        run: |
+          set -eux
+          git clone --depth 1 --branch fuxi https://github.com/SadNutWall/UniXNU unixnu
+          git clone --depth 1 https://github.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17 kerfand
+          cp -R kerfand/device device
+          cp -R kerfand/ios17 device-ios17
+          rm -rf device/drivers/QcomXnuUsbDebug
+          git clone --quiet https://github.com/xiaoleGun/QcomXnuUsbDebug.git device/drivers/QcomXnuUsbDebug
+          git -C device/drivers/QcomXnuUsbDebug fetch -q --depth 1 origin 83be5782ad7227d7d245862ce1ae3272cae14242
+          git -C device/drivers/QcomXnuUsbDebug checkout -q 83be5782ad7227d7d245862ce1ae3272cae14242
+          git -C device/drivers/QcomXnuUsbDebug rev-parse HEAD
+
+      - name: Apply the UniXNU patch and clone the submodules at head
+        working-directory: work
+        run: |
+          set -eux
+          git -C unixnu apply "$(pwd)"/kerfand/unixnu/commits/UniXNU/*.patch
+          cd unixnu
+          git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read key path; do
+            urlkey=$(echo "$key" | sed 's/[.]path$/.url/')
+            url=$(git config -f .gitmodules --get "$urlkey")
+            if [ -z "$(ls -A "$path" 2>/dev/null)" ]; then
+              rm -rf "$path"
+              git clone --depth 1 --quiet "$url" "$path" || echo "CLONE FAILED $path"
+            fi
+          done
+          git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read key path; do
+            name=$(echo "$key" | sed 's/^submodule[.]//; s/[.]path$//')
+            git config "submodule.$name.update" none
+            git config -f .gitmodules "submodule.$name.update" none
+          done
+          ls drivers kits | head -40
+
+      - name: Copy the untracked files
+        working-directory: work
+        run: |
+          set -eux
+          cp -R kerfand/unixnu/files/. unixnu/ 2>/dev/null || true
+          cp -R kerfand/unixnu/patches/. unixnu/patches/ 2>/dev/null || true
+          # The device scripts run from the assembled tree and import the kernel target helper,
+          # which only exists in the UniXNU scripts directory. Seed the device scripts with it.
+          # kernel_target.py exists on UniXNU main but not on the fuxi branch.
+          if [ ! -f unixnu/scripts/kernel_target.py ]; then
+            curl -fsSL "https://raw.githubusercontent.com/SadNutWall/UniXNU/main/scripts/kernel_target.py" -o unixnu/scripts/kernel_target.py || echo "download failed"
+          fi
+          mkdir -p device/scripts
+          cp -f unixnu/scripts/kernel_target.py device/scripts/kernel_target.py || echo "copy failed"
+          ls -l unixnu/scripts/kernel_target.py device/scripts/kernel_target.py || true
+
+      - name: Apply the module diffs to the real submodules
+        working-directory: work
+        run: |
+          set +e
+          base () { repo=$1; sha=$2
+            if git -C "$repo" fetch -q --depth 1 origin "$sha" 2>/dev/null; then git -C "$repo" checkout -q "$sha" && echo "  base $sha"; else echo "  base $sha unavailable"; fi; }
+          apply () { repo=$1; name=$2; patch=$(pwd)/kerfand/unixnu/diffs/$3
+            if [ ! -s "$patch" ]; then echo "$name: empty"; return 0; fi
+            if git -C "$repo" apply "$patch" 2>/dev/null; then echo "$name: applied"; return 0; fi
+            if ( cd "$repo" && patch -p1 -F3 -s < "$patch" ) 2>/dev/null; then echo "$name: applied (patch)"; return 0; fi
+            echo "$name: FAILED"; }
+          base unixnu/drivers/Adreno740 a9a2cbb43b89d672e2921e19721a6438b738b17f
+          base unixnu/drivers/AdrenoMetal 5d56587b301ed42b4742528aac9d3a40774ad9aa
+          base unixnu/drivers/DarwinBoot 3c75734014cdab0acd9541e88057b7606ee7ae08
+          base unixnu/drivers/GopFramebuffer 19ef3a75ad2c53da85b8d923553d922716fce377
+          base unixnu/kits/VerifiedRoot 974f043d0c71ba2e60331483a41c6c6d35274ee3
+          base unixnu/kits/XnuPrelink ddb7afa0046668b3d44efe0cc5c986f1c442644d
+          apply unixnu/drivers/Adreno740 Adreno740 drivers_Adreno740.diff
+          apply unixnu/drivers/AdrenoMetal AdrenoMetal drivers_AdrenoMetal.diff
+          apply unixnu/drivers/DarwinBoot DarwinBoot drivers_DarwinBoot.diff
+          apply unixnu/drivers/GopFramebuffer GopFramebuffer drivers_GopFramebuffer.diff
+          apply unixnu/kits/VerifiedRoot VerifiedRoot kits_VerifiedRoot.diff
+          apply unixnu/kits/XnuPrelink XnuPrelink kits_XnuPrelink.diff
+          exit 0
+
+      - name: Plan B - drop the USB debug stage when the marker exists
+        working-directory: work
+        run: |
+          set -eux
+          if [ ! -f ci/skip_usb_debug ]; then echo "USB debug stage kept"; exit 0; fi
+          echo "marker present: removing the USB debug stage"
+          for f in $(grep -rl "prepare-fuxi-usb-debug.py" device-ios17/scripts device/scripts 2>/dev/null); do
+            perl -pi -e 's{^.*prepare-fuxi-usb-debug[.]py.*$}{true}g' "$f"
+            echo "patched $f"
+          done
+          for c in device-ios17/configs/fuxi_ios17_kernel_defconfig device/configs/fuxi_ios17_kernel_defconfig; do
+            [ -f "$c" ] && perl -ni -e 'print unless /usb-debug/' "$c" || true
+          done
+
+      - name: Download IPSW and extract the kernelcache
+        working-directory: work
+        run: |
+          set -eux
+          curl -sS -m 60 "https://api.ipsw.me/v4/device/iPhone15,2?type=ipsw" -o ipsw.json
+          url=$(python3 -c "import json;d=json.load(open('ipsw.json'));print([f for f in d['firmwares'] if f['buildid']=='21H16'][0]['url'])")
+          curl -L --retry 3 -o ipsw.zip "$url"
+          member=$(unzip -l ipsw.zip | awk 'tolower($4) ~ /kernelcache/ {print $4}' | grep -i release | head -1)
+          mkdir -p kernel
+          unzip -o -q ipsw.zip "$member" -d kernel
+          python3 -m pip install --quiet --break-system-packages lzfse || python3 -m pip install --quiet lzfse
+          mkdir -p "$UNIXNU_OUT/ipsw/21H16"
+          python3 tools/extract_kernelcache.py "kernel/$member" -o "$UNIXNU_OUT/ipsw/21H16/kernelcache.decompressed"
+          ls -l "$UNIXNU_OUT/ipsw/21H16/kernelcache.decompressed"
+
+      - name: Fetch the feeds and pin refer/xnu
+        working-directory: work/unixnu
+        run: |
+          set +e
+          DEV="$GITHUB_WORKSPACE/work/device-ios17"
+          ./unixnu fetch -D "$DEV" 2>&1 | tail -20
+          X="$UNIXNU_OUT/refer/xnu"
+          if [ -d "$X/.git" ]; then
+            echo "refer/xnu before: $(git -C "$X" rev-parse HEAD)"
+            git -C "$X" fetch -q --depth 1 origin d8b80295118ef25ac3a784134bcf95cd8e88109f && git -C "$X" checkout -q d8b80295118ef25ac3a784134bcf95cd8e88109f
+            echo "refer/xnu after:  $(git -C "$X" rev-parse HEAD)"
+          else
+            echo "no refer/xnu checkout"
+          fi
+          exit 0
+
+      - name: Build the kernel
+        working-directory: work/unixnu
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          source "$GITHUB_WORKSPACE/tc/env.sh"
+          ./unixnu defconfig fuxi_ios17_kernel_defconfig -D "$GITHUB_WORKSPACE/work/device-ios17"
+          ./unixnu build kernel -D "$GITHUB_WORKSPACE/work/device-ios17" -j 8
+          find "$UNIXNU_OUT" -name kernel.macho | head
+
+      - name: Encrypt the kernel
+        if: always()
+        working-directory: work
+        run: |
+          set +e
+          python3 -m pip install --quiet --break-system-packages cryptography || python3 -m pip install --quiet cryptography
+          k=$(find unixnu/out-ios17 -name kernel.macho | head -1)
+          [ -n "$k" ] || { echo "no kernel.macho"; exit 0; }
+          gzip -9 -n -c "$k" > kernel.macho.gz
+          shasum -a 256 "$k" > kernel.macho.sha256
+          python3 tools/pack_secret.py ci/recipient.pem secret kernel.macho.gz kernel.macho.sha256
+          ls -l secret
+
+      - name: Upload the encrypted kernel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-encrypted
+          path: work/secret/*
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-logs
+          path: work/unixnu/out-ios17/logs/*.log
+          if-no-files-found: warn
+          retention-days: 7
