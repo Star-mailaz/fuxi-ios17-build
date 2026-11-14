@@ -22,7 +22,7 @@ jobs:
       - name: Install tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq unzip p7zip-full python3 curl jq zstd
+          sudo apt-get install -y -qq unzip p7zip-full python3 curl jq
 
       - name: Resolve the IPSW URL
         working-directory: work
@@ -31,9 +31,8 @@ jobs:
           curl -sS -m 60 "https://api.ipsw.me/v4/device/iPhone15,2?type=ipsw" -o ipsw.json
           python3 - <<'PY' > url.txt
           import json
-          d=json.load(open('ipsw.json',encoding='utf-8'))
-          hit=[f for f in d['firmwares'] if f['buildid']=='21H16']
-          print(hit[0]['url'])
+          d = json.load(open('ipsw.json', encoding='utf-8'))
+          print([f for f in d['firmwares'] if f['buildid'] == '21H16'][0]['url'])
           PY
           cat url.txt
 
@@ -45,27 +44,23 @@ jobs:
           ls -l ipsw.zip
           df -h /
 
-      - name: List the KernelCache members
-        working-directory: work
-        run: |
-          unzip -l ipsw.zip | grep -i kernelcache | head -20 || true
-
-      - name: Extract the KernelCache
+      - name: Extract the KernelCache member
         working-directory: work
         run: |
           set -eux
+          unzip -l ipsw.zip | grep -i kernelcache | head -10
           member=$(unzip -l ipsw.zip | awk 'tolower($4) ~ /kernelcache/ {print $4}' | grep -i release | head -1)
           echo "member=$member"
           mkdir -p kernel
           unzip -o -q ipsw.zip "$member" -d kernel
-          find kernel -type f -exec ls -l {} \;
+          ls -l kernel
           for f in kernel/*; do echo "== $f"; head -c 16 "$f" | xxd; done
 
       - name: Decompress the kernelcache
         working-directory: work
         run: |
           set -eux
-          python3 -m pip install --quiet lzfse || echo "lzfse install failed, LZSS only"
+          python3 -m pip install --quiet lzfse || echo "lzfse unavailable, LZSS only"
           f=$(ls kernel/* | head -1)
           python3 tools/extract_kernelcache.py "$f" -o kernelcache.decompressed
           ls -l kernelcache.decompressed
@@ -74,6 +69,5 @@ jobs:
       - name: Report
         if: always()
         run: |
-          ls -lR work/kernel work/kernel2 2>/dev/null | head -40
-          ls -l work/kernelcache.decompressed 2>/dev/null || echo "no decompressed kernelcache"
+          ls -l work/kernel work/kernelcache.decompressed 2>/dev/null || true
           df -h /
