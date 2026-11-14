@@ -155,6 +155,8 @@ jobs:
 
       - name: Build the kernel
         working-directory: work/unixnu
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -eux
           ./unixnu defconfig fuxi_ios17_kernel_defconfig -D "$GITHUB_WORKSPACE/work/device-ios17"
