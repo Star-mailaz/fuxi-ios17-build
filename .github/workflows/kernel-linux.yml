@@ -244,6 +244,9 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -eux
+          ulimit -s 65536 || echo "could not raise the stack limit"
+          ulimit -s
+          grep -n "build-\|prepare-\|\.py" "$GITHUB_WORKSPACE/work/device-ios17/board.toml" | sed -n '1,40p' || true
           ./unixnu defconfig fuxi_ios17_kernel_defconfig -D "$GITHUB_WORKSPACE/work/device-ios17"
           set +e
           ./unixnu build kernel -D "$GITHUB_WORKSPACE/work/device-ios17" -j 8
