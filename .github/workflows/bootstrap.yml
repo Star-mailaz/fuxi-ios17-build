@@ -1,0 +1,108 @@
+name: bootstrap
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  tree:
+    name: Patch chain + UniXNU config
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+        with:
+          path: work
+
+      - name: Install host tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential clang lld llvm python3 python3-pip \
+            device-tree-compiler mtools dosfstools libssl-dev uuid-dev zlib1g-dev \
+            libgnutls28-dev libfuse-dev git
+          clang --version | head -1
+          ld.lld --version | head -1
+          python3 --version
+
+      - name: Clone the upstreams
+        working-directory: work
+        run: |
+          set -eux
+          git clone --depth 1 --branch fuxi https://github.com/SadNutWall/UniXNU unixnu
+          git clone --depth 1 https://github.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17 kerfand
+          for pair in Adreno740:UniXNU/Adreno740 AdrenoMetal:UniXNU/AdrenoMetal \
+                      DarwinBoot:UniXNU/DarwinBoot GopFramebuffer:UniXNU/GopFramebuffer \
+                      VerifiedRoot:UniXNU/VerifiedRoot XnuPrelink:UniXNU/XnuPrelink; do
+            name=${pair%%:*}; repo=${pair#*:}
+            git clone --depth 1 "https://github.com/$repo" "modules/$name" || true
+          done
+          du -sh unixnu kerfand modules/* 2>/dev/null | tail -10
+
+      - name: Apply the author's UniXNU patch
+        working-directory: work
+        run: |
+          set -eux
+          ls kerfand/unixnu/commits/UniXNU/
+          git -C unixnu apply --stat kerfand/unixnu/commits/UniXNU/*.patch
+          git -C unixnu apply kerfand/unixnu/commits/UniXNU/*.patch
+          echo "--- applied"
+      - name: Copy the author's untracked files
+        working-directory: work
+        run: |
+          set -eux
+          ls -R kerfand/unixnu/files | head -40
+          cp -rv kerfand/unixnu/files/. unixnu/ 2>/dev/null || true
+          ls kerfand/unixnu/patches
+
+      - name: Apply the module diffs
+        working-directory: work
+        run: |
+          set -eux
+          apply () { repo=$1; name=$2; patch=kerfand/unixnu/diffs/$3
+            if [ ! -s "$patch" ]; then echo "$name: empty diff, nothing to do"; return 0; fi
+            if git -C "$repo" apply --check "$(pwd)/$patch"; then
+              git -C "$repo" apply "$(pwd)/$patch"; echo "$name: applied"
+            else
+              echo "$name: FAILED to apply"; git -C "$repo" apply --check --verbose "$(pwd)/$patch" || true; return 1
+            fi; }
+          apply modules/Adreno740 Adreno740 drivers_Adreno740.diff || true
+          apply modules/AdrenoMetal AdrenoMetal drivers_AdrenoMetal.diff || true
+          apply modules/DarwinBoot DarwinBoot drivers_DarwinBoot.diff || true
+          apply modules/GopFramebuffer GopFramebuffer drivers_GopFramebuffer.diff || true
+          apply modules/VerifiedRoot VerifiedRoot kits_VerifiedRoot.diff || true
+          apply modules/XnuPrelink XnuPrelink kits_XnuPrelink.diff || true
+
+      - name: Wire the device trees into the UniXNU checkout
+        working-directory: work
+        run: |
+          set -eux
+          cp -rv kerfand/device unixnu-fuxi
+          cp -rv kerfand/ios17 unixnu-fuxi-ios17
+          ls unixnu-fuxi | head -20
+          ls unixnu-fuxi-ios17 | head -20
+
+      - name: Resolve the board configuration
+        working-directory: work/unixnu
+        run: |
+          set +e
+          ./unixnu defconfig fuxi_defconfig --device "$GITHUB_WORKSPACE/work/unixnu-fuxi" 2>&1 | tail -40
+          echo "defconfig_exit=$?"
+          ./unixnu status --device "$GITHUB_WORKSPACE/work/unixnu-fuxi" --json > ../status.json 2>../status.err
+          echo "status_exit=$?"
+          tail -20 ../status.err
+          head -c 1500 ../status.json
+
+      - name: Collect the text logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-logs
+          path: |
+            work/status.json
+            work/status.err
+          if-no-files-found: warn
+          retention-days: 7
