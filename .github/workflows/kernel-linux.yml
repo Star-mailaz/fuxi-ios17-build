@@ -83,11 +83,19 @@ jobs:
             [ -x "$src" ] || src="$XNU_LINUX_PREFIX/bin/$t"
             if [ -x "$src" ]; then sudo ln -sf "$src" "/usr/bin/$t"; echo "linked $t -> $src"; else echo "MISSING $t"; fi
           done
-          for t in llvm-config llvm-ar llvm-objcopy llvm-ranlib llvm-nm; do
-            src="$XNU_LINUX_PREFIX/llvm/bin/$t"
-            if [ -x "$src" ]; then sudo ln -sf "$src" "/usr/bin/$t"; echo "linked $t"; else echo "no $t in the toolchain"; fi
+          P="$XNU_LINUX_PREFIX"
+          BIN="$GITHUB_WORKSPACE/llvm-bin"
+          mkdir -p "$BIN"
+          for t in clang llvm-ar llvm-nm llvm-objcopy llvm-ranlib llvm-strip ld.lld; do
+            for cand in "$P/llvm/bin/$t" "$P/CommandLineTools/usr/bin/$t" "$P/bin/$t" "$P/llvm/bin/$t-24"; do
+              if [ -x "$cand" ]; then ln -sf "$cand" "$BIN/$t"; break; fi
+            done
           done
-          llvm-config --version || true
+          ls -l "$BIN" || true
+          printf '#!/bin/sh\ncase "$1" in\n  --bindir) echo "%s" ;;\n  --version) echo "24.0.0" ;;\n  *) echo "unsupported" ;;\nesac\n' "$BIN" | sudo tee /usr/bin/llvm-config >/dev/null
+          sudo chmod +x /usr/bin/llvm-config
+          llvm-config --bindir
+          test -x "$BIN/clang" && test -e "$BIN/llvm-ar" && test -e "$BIN/llvm-nm"
           ls -l /usr/bin/xcrun /usr/bin/plutil /usr/bin/codesign
           /usr/bin/xcrun --version || true
       - name: Apply the UniXNU patch and clone the submodules at head
