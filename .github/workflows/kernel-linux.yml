@@ -38,7 +38,8 @@ jobs:
           sudo apt-get install -y -qq libblocksruntime-dev libbsd-dev libpthread-workqueue-dev || true
           git clone --depth 1 https://github.com/swiftlang/swift-corelibs-libdispatch "$GITHUB_WORKSPACE/libdispatch"
           cmake -S "$GITHUB_WORKSPACE/libdispatch" -B "$GITHUB_WORKSPACE/libdispatch/build" \
-            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DINSTALL_PRIVATE_HEADERS=YES
+            -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF -DINSTALL_PRIVATE_HEADERS=YES \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
           cmake --build "$GITHUB_WORKSPACE/libdispatch/build" -j 8
           sudo cmake --install "$GITHUB_WORKSPACE/libdispatch/build"
           sudo ldconfig
