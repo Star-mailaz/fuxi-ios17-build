@@ -1,0 +1,21 @@
+name: macos-probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe13:
+    runs-on: macos-13
+    steps:
+      - run: sw_vers; hdiutil info | head -3
+  probe14:
+    runs-on: macos-14
+    steps:
+      - run: sw_vers; hdiutil info | head -3
+  probeLatest:
+    runs-on: macos-latest
+    steps:
+      - run: sw_vers; hdiutil info | head -3
