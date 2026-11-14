@@ -1,0 +1,83 @@
+name: verified-root
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  policies:
+    name: owner policies for 21H16
+    runs-on: macos-14
+    timeout-minutes: 150
+    env:
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: work
+
+      - name: Clone UniXNU and the VerifiedRoot kit
+        working-directory: work
+        run: |
+          set -eux
+          git clone --depth 1 --branch fuxi https://github.com/SadNutWall/UniXNU unixnu
+          pin=$(git -C unixnu ls-tree HEAD -- kits/VerifiedRoot | awk '{print $3}')
+          echo "gitlink pin=$pin"
+          rm -rf unixnu/kits/VerifiedRoot
+          git clone --quiet https://github.com/UniXNU/VerifiedRoot.git unixnu/kits/VerifiedRoot
+          if [ -n "$pin" ]; then
+            if git -C unixnu/kits/VerifiedRoot fetch -q --depth 1 origin "$pin"; then
+              git -C unixnu/kits/VerifiedRoot checkout -q "$pin"
+              echo "pinned $(git -C unixnu/kits/VerifiedRoot rev-parse HEAD)"
+            else
+              echo "pin unavailable, head $(git -C unixnu/kits/VerifiedRoot rev-parse HEAD)"
+            fi
+          fi
+          ls -l unixnu/kits/VerifiedRoot/tools/manifest.py
+
+      - name: Restore the owner key
+        uses: actions/cache/restore@v4
+        with:
+          path: work/keys
+          key: verified-root-owner-key-v1
+          restore-keys: |
+            verified-root-owner-key-
+
+      - name: Fetch the 21H16 IPSW
+        working-directory: work
+        run: |
+          set -eux
+          curl -sS -m 60 "https://api.ipsw.me/v4/device/iPhone15,2?type=ipsw" -o ipsw.json
+          url=$(python3 -c "import json;d=json.load(open('ipsw.json'));print([f for f in d['firmwares'] if f['buildid']=='21H16'][0]['url'])")
+          echo "url=$url"
+          curl -L --retry 3 -o ipsw.zip "$url"
+          ls -l ipsw.zip
+
+      - name: Build the owner policies
+        working-directory: work
+        run: |
+          set -eux
+          python3 ci/prepare_verified_root.py \
+            --ipsw ipsw.zip \
+            --manifest-module unixnu/kits/VerifiedRoot/tools/manifest.py \
+            --out out-verified-root \
+            --keys keys
+          find out-verified-root -type f -exec ls -l {} +
+
+      - name: Save the owner key
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: work/keys
+          key: verified-root-owner-key-${{ github.run_id }}
+
+      - name: Upload the policies
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-root-policies
+          path: work/out-verified-root
+          if-no-files-found: warn
+          retention-days: 14
