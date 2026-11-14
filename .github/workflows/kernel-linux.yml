@@ -154,6 +154,22 @@ jobs:
           apply unixnu/kits/XnuPrelink XnuPrelink kits_XnuPrelink.diff
           exit 0
 
+      - name: Fetch the fuxi device tree
+        working-directory: work
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          mkdir -p uefi-fuxi/Resources/DTBs
+          for name in fuxi.dtb fuxi.dts; do
+            curl -sSL --retry 3 -H "Authorization: Bearer $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/hanzi123-bilp/uefi-fuxi/contents/Resources/DTBs/$name?ref=fuxi" \
+              -o "uefi-fuxi/Resources/DTBs/$name"
+          done
+          ls -l uefi-fuxi/Resources/DTBs
+          od -A n -t x1 -N 8 uefi-fuxi/Resources/DTBs/fuxi.dtb
+
       - name: Plan B - drop the USB debug stage when the marker exists
         working-directory: work
         run: |
