@@ -86,9 +86,13 @@ jobs:
           git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read key path; do
             urlkey=$(echo "$key" | sed 's/[.]path$/.url/')
             url=$(git config -f .gitmodules --get "$urlkey")
-            if [ -z "$(ls -A "$path" 2>/dev/null)" ]; then
-              rm -rf "$path"
-              git clone --depth 1 --quiet "$url" "$path" || echo "CLONE FAILED $path"
+            pin=$(git ls-tree HEAD -- "$path" | awk '{print $3}')
+            rm -rf "$path"
+            git clone --depth 1 --quiet "$url" "$path" || echo "CLONE FAILED $path"
+            if [ -n "$pin" ] && git -C "$path" fetch -q --depth 1 origin "$pin" 2>/dev/null; then
+              git -C "$path" checkout -q "$pin" && echo "pinned $path @ $(echo $pin | cut -c1-8)"
+            else
+              echo "head $path (pin $pin unavailable)"
             fi
           done
           git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read key path; do
