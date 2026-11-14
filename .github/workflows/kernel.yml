@@ -37,7 +37,6 @@ jobs:
           git clone --depth 1 https://github.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17 kerfand
           cp -R kerfand/device device
           cp -R kerfand/ios17 device-ios17
-          # QcomXnuUsbDebug is a public submodule of the device repository (xiaoleGun), pinned.
           rm -rf device/drivers/QcomXnuUsbDebug
           git clone --quiet https://github.com/xiaoleGun/QcomXnuUsbDebug.git device/drivers/QcomXnuUsbDebug
           git -C device/drivers/QcomXnuUsbDebug fetch -q --depth 1 origin 83be5782ad7227d7d245862ce1ae3272cae14242
@@ -55,7 +54,7 @@ jobs:
             url=$(git config -f .gitmodules --get "$urlkey")
             if [ -z "$(ls -A "$path" 2>/dev/null)" ]; then
               rm -rf "$path"
-              git clone --depth 1 --quiet "$url" "$path" && echo "cloned $path" || echo "CLONE FAILED $path"
+              git clone --depth 1 --quiet "$url" "$path" || echo "CLONE FAILED $path"
             fi
           done
           git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read key path; do
@@ -96,6 +95,20 @@ jobs:
           apply unixnu/kits/VerifiedRoot VerifiedRoot kits_VerifiedRoot.diff
           apply unixnu/kits/XnuPrelink XnuPrelink kits_XnuPrelink.diff
           exit 0
+
+      - name: Plan B - drop the USB debug stage when the marker exists
+        working-directory: work
+        run: |
+          set -eux
+          if [ ! -f ci/skip_usb_debug ]; then echo "USB debug stage kept"; exit 0; fi
+          echo "marker present: removing the USB debug stage"
+          for f in $(grep -rl "prepare-fuxi-usb-debug.py" device-ios17/scripts device/scripts 2>/dev/null); do
+            sed -i 's|prepare-fuxi-usb-debug.py|true # skipped|g' "$f"
+            echo "patched $f"
+          done
+          for c in device-ios17/configs/fuxi_ios17_kernel_defconfig device/configs/fuxi_ios17_kernel_defconfig; do
+            [ -f "$c" ] && sed -i '/usb-debug/d' "$c" || true
+          done
 
       - name: Download IPSW and extract the kernelcache
         working-directory: work
