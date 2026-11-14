@@ -29,7 +29,14 @@ jobs:
       - name: Toolchain
         run: |
           set -eux
-          xcodebuild -version
+          brew install dtc llvm lld cmake mtools ninja bison pkgconf unifdef || true
+          {
+            echo "/opt/homebrew/opt/llvm/bin"
+            echo "/opt/homebrew/opt/lld/bin"
+            echo "/opt/homebrew/opt/bison/bin"
+            echo "$(brew --prefix unifdef)/bin"
+          } >> "$GITHUB_PATH"
+          xcodebuild -version | head -1 || true
           xcrun --sdk iphoneos --show-sdk-version
 
       - name: Clone UniXNU and the author repository
