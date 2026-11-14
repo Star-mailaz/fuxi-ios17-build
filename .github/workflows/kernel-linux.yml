@@ -56,9 +56,15 @@ jobs:
           git -C device/drivers/QcomXnuUsbDebug checkout -q 83be5782ad7227d7d245862ce1ae3272cae14242
           git -C device/drivers/QcomXnuUsbDebug rev-parse HEAD
 
+      - name: Restore the Linux XNU toolchain
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/xnu-linux
+          key: xnu-linux-toolchain-v1
       - name: Build the Linux XNU toolchain
         run: |
           set -eux
+          if [ -x "$XNU_LINUX_PREFIX/llvm/bin/clang" ]; then echo "toolchain already cached"; exit 0; fi
           sudo python3 "$GITHUB_WORKSPACE/work/unixnu/scripts/linux/setup-toolchain.py" "$XNU_LINUX_PREFIX"
           ls "$XNU_LINUX_PREFIX"
           ls "$XNU_LINUX_PREFIX/llvm/bin/clang" "$XNU_LINUX_PREFIX/bin/lzfse" || true
