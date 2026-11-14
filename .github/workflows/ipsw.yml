@@ -54,13 +54,12 @@ jobs:
         working-directory: work
         run: |
           set -eux
-          member=$(unzip -l ipsw.zip | awk '/KernelCache/ {print $4}' | head -1)
+          member=$(unzip -l ipsw.zip | awk 'tolower($4) ~ /kernelcache/ {print $4}' | grep -i release | head -1)
           echo "member=$member"
           mkdir -p kernel
-          unzip -o ipsw.zip "$member" -d kernel
+          unzip -o -q ipsw.zip "$member" -d kernel
           find kernel -type f -exec ls -l {} \;
-          file kernel/* 2>/dev/null || true
-          head -c 32 kernel/* | xxd | head -3
+          for f in kernel/*; do echo "== $f"; head -c 16 "$f" | xxd; done
 
       - name: Try to decompress with the ipsw tool
         working-directory: work
@@ -72,10 +71,15 @@ jobs:
           ./ipsw version 2>/dev/null | head -3
           ./ipsw extract --kernel ipsw.zip -o kernel2 2>&1 | tail -20
           ls -l kernel2 2>/dev/null
+          f=$(ls kernel/* | head -1)
+          ./ipsw kernel dec "$f" -o kernelcache.decompressed 2>&1 | tail -10 || true
+          ./ipsw kernel dec "$f" > kernelcache.decompressed 2>/dev/null || true
+          ls -l kernelcache.decompressed 2>/dev/null && head -c 16 kernelcache.decompressed | xxd
           exit 0
 
       - name: Report
         if: always()
         run: |
           ls -lR work/kernel work/kernel2 2>/dev/null | head -40
+          ls -l work/kernelcache.decompressed 2>/dev/null || echo "no decompressed kernelcache"
           df -h /
