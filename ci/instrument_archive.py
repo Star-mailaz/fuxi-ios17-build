@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Patch the UniXNU archive builders for the GitHub Actions build.
 
-Every copy of each target file under the given root is patched, because the build
-tree assembles its scripts from unixnu/scripts and the device overlays and the
-exact source of a tree copy differs per file.
+Every copy of each target file under the given root is patched: the build tree
+assembles its scripts from unixnu/scripts and the device overlays, so the source
+of a given script differs per file.
 
 1. build-libpthread-kernel.py asserts every object header is exactly
    (MH_MAGIC_64, CPU_TYPE_ARM64, subtype 0, MH_OBJECT). The bootstrap object is
@@ -14,7 +14,7 @@ exact source of a tree copy differs per file.
 2. build-ios17-verified-root.py reads four sample blocks out of userdata-root.img,
    which only exists on the author's machine. The samples are only referenced by
    the offline-owner-root-check boot argument, so fall back to zero blocks when the
-   image is absent.
+   image is absent. Two single-line edits keep the rest of the script intact.
 """
 import sys
 from pathlib import Path
@@ -39,44 +39,23 @@ LIBPTHREAD_NEW = """    data = destination.read_bytes()
     print('CI-ARCH %s subtype=%s arm64e=%s' % (destination.name, subtype, bool(words[2] & 0x80000000)))
 """
 
-VERIFIED_OLD = """report = json.loads(IMAGE.with_name('userdata-root.json').read_text())
-window = next(w for w in report['windows'] if w['name'] == 'OS')
-count = records[0]['block_count']
-indices = [0, 1, count // 2, count - 1]
-lengths = [4096, 4096, 4096, window['size'] - (count - 1) * 4096]
-samples = out / 'original-samples.bin'
-with IMAGE.open('rb') as stream:
-    data = b''
-    for index, length in zip(indices, lengths):
-        stream.seek(window['offset'] + index * 4096)
-        data += stream.read(length).ljust(4096, b'\0')
-samples.write_bytes(data)
-"""
+VERIFIED_REPORT_OLD = "report = json.loads(IMAGE.with_name('userdata-root.json').read_text())"
+VERIFIED_REPORT_NEW = ("report = (json.loads(IMAGE.with_name('userdata-root.json').read_text())
+"
+                       "          if IMAGE.with_name('userdata-root.json').is_file() else
+"
+                       "          {'windows': [{'name': 'OS', 'offset': 0,
+"
+                       "                        'size': records[0]['block_count'] * 4096}]})")
 
-VERIFIED_NEW = """count = records[0]['block_count']
-indices = [0, 1, count // 2, count - 1]
-lengths = [4096, 4096, 4096, 4096]
-samples = out / 'original-samples.bin'
-report_path = IMAGE.with_name('userdata-root.json')
-if IMAGE.is_file() and report_path.is_file():
-    report = json.loads(report_path.read_text())
-    window = next(w for w in report['windows'] if w['name'] == 'OS')
-    lengths = [4096, 4096, 4096, window['size'] - (count - 1) * 4096]
-    with IMAGE.open('rb') as stream:
-        data = b''
-        for index, length in zip(indices, lengths):
-            stream.seek(window['offset'] + index * 4096)
-            data += stream.read(length).ljust(4096, b'\0')
-    samples.write_bytes(data)
-    print('CI-NOTE samples read from', IMAGE)
-else:
-    print('CI-NOTE no userdata image at', IMAGE, '- writing zero samples')
-    samples.write_bytes(b'\0' * 16384)
-"""
+VERIFIED_OPEN_OLD = "with IMAGE.open('rb') as stream:"
+VERIFIED_OPEN_NEW = "with (IMAGE.open('rb') if IMAGE.is_file() else open(os.devnull, 'rb')) as stream:"
 
 EDITS = (
-    ('build-libpthread-kernel.py', LIBPTHREAD_OLD, LIBPTHREAD_NEW, 'CI-ARCH '),
-    ('build-ios17-verified-root.py', VERIFIED_OLD, VERIFIED_NEW, 'CI-NOTE no userdata image'),
+    ('build-libpthread-kernel.py', [(LIBPTHREAD_OLD, LIBPTHREAD_NEW)], 'CI-ARCH '),
+    ('build-ios17-verified-root.py',
+     [(VERIFIED_REPORT_OLD, VERIFIED_REPORT_NEW), (VERIFIED_OPEN_OLD, VERIFIED_OPEN_NEW)],
+     'os.devnull'),
 )
 
 
@@ -92,21 +71,24 @@ def candidates(root, name):
 def main(root):
     base = Path(root)
     failures = 0
-    for name, old, new, marker in EDITS:
-        patched = already = stubs = 0
+    for name, edits, marker in EDITS:
+        patched = already = skipped = 0
         for path in candidates(base, name):
             text = path.read_text(errors='replace')
             if marker in text:
                 already += 1
                 continue
-            if old in text:
-                path.write_text(text.replace(old, new, 1))
-                print('PATCHED', path)
-                patched += 1
-            else:
-                stubs += 1
-                print('skip', path, '(%d bytes, no anchor)' % len(text))
-        print('%s: patched=%d already=%d skipped=%d' % (name, patched, already, stubs))
+            missing = [old for old, _ in edits if old not in text]
+            if missing:
+                skipped += 1
+                print('skip', path, '(%d bytes, no anchor: %r)' % (len(text), missing[0][:60]))
+                continue
+            for old, new in edits:
+                text = text.replace(old, new, 1)
+            path.write_text(text)
+            print('PATCHED', path)
+            patched += 1
+        print('%s: patched=%d already=%d skipped=%d' % (name, patched, already, skipped))
         if patched == 0 and already == 0:
             failures += 1
             print('FAILED', name)
