@@ -9,11 +9,11 @@ of a given script differs per file.
    (MH_MAGIC_64, CPU_TYPE_ARM64, subtype 0, MH_OBJECT). The bootstrap object is
    compiled from the XNU build recipe, which carries --target=arm64e-apple-ios17.0
    -arch arm64e, so it comes out arm64e (subtype 2 plus the ptrauth ABI bit).
-   Accept arm64 and arm64e, and keep the full diagnostic for anything else.
+   Accept arm64 and arm64e and keep the full diagnostic for anything else.
 
 2. build-ios17-verified-root.py reads four sample blocks out of userdata-root.img,
-   which only exists on the author's machine. The samples are only referenced by
-   the offline-owner-root-check boot argument, so fall back to zero blocks when the
+   which only exists on the author machine. The samples are only referenced by the
+   offline-owner-root-check boot argument, so fall back to zero blocks when the
    image is absent. Two single-line edits keep the rest of the script intact.
 """
 import sys
@@ -40,13 +40,7 @@ LIBPTHREAD_NEW = """    data = destination.read_bytes()
 """
 
 VERIFIED_REPORT_OLD = "report = json.loads(IMAGE.with_name('userdata-root.json').read_text())"
-VERIFIED_REPORT_NEW = ("report = (json.loads(IMAGE.with_name('userdata-root.json').read_text())
-"
-                       "          if IMAGE.with_name('userdata-root.json').is_file() else
-"
-                       "          {'windows': [{'name': 'OS', 'offset': 0,
-"
-                       "                        'size': records[0]['block_count'] * 4096}]})")
+VERIFIED_REPORT_NEW = "report = (json.loads(IMAGE.with_name('userdata-root.json').read_text()) if IMAGE.with_name('userdata-root.json').is_file() else {'windows': [{'name': 'OS', 'offset': 0, 'size': records[0]['block_count'] * 4096}]})"
 
 VERIFIED_OPEN_OLD = "with IMAGE.open('rb') as stream:"
 VERIFIED_OPEN_NEW = "with (IMAGE.open('rb') if IMAGE.is_file() else open(os.devnull, 'rb')) as stream:"
