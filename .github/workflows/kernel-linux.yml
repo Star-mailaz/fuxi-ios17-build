@@ -80,10 +80,14 @@ jobs:
       - name: Install the toolchain shims into /usr/bin
         run: |
           set -eux
+          SHIMS="$GITHUB_WORKSPACE/work/unixnu/scripts/linux"
           for t in xcrun plutil codesign; do
-            if [ -x "$XNU_LINUX_PREFIX/bin/$t" ]; then sudo ln -sf "$XNU_LINUX_PREFIX/bin/$t" "/usr/bin/$t"; fi
+            src="$SHIMS/$t"
+            [ -x "$src" ] || src="$XNU_LINUX_PREFIX/bin/$t"
+            if [ -x "$src" ]; then sudo ln -sf "$src" "/usr/bin/$t"; echo "linked $t -> $src"; else echo "MISSING $t"; fi
           done
-          ls -l /usr/bin/xcrun || echo "no xcrun"
+          ls -l /usr/bin/xcrun /usr/bin/plutil /usr/bin/codesign
+          /usr/bin/xcrun --version || true
       - name: Apply the UniXNU patch and clone the submodules at head
         working-directory: work
         run: |
