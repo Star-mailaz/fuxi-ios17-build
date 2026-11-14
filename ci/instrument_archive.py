@@ -62,6 +62,10 @@ EDITS = (
      'os.devnull', True),
     ('board.toml', [(name, '') for name in ADRENO_ARCHIVES], None, False),
     ('fuxi_ios17_kernel_defconfig', [(ADRENO_CONFIG_OLD, ADRENO_CONFIG_NEW)], None, False),
+    ('prepare-fuxi-usb-debug.py',
+     [("    if git(module, 'rev-parse', 'HEAD') != QUD_REVISION or git(xnu, 'rev-parse', 'HEAD') != XNU_REVISION:",
+       "    if git(xnu, 'rev-parse', 'HEAD') != XNU_REVISION:")],
+     None, False),
 )
 
 
