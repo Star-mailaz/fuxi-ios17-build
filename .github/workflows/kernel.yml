@@ -18,6 +18,9 @@ jobs:
       XNU_KERNEL_CHAINED_FIXUPS: "1"
       JOBS: "8"
       PYTHONUNBUFFERED: "1"
+      # The archive scripts import kernel_target.py from the UniXNU scripts directory,
+      # but they run from the assembled tree (device side), which is not on sys.path.
+      PYTHONPATH: ${{ github.workspace }}/work/unixnu/scripts
     steps:
       - uses: actions/checkout@v4
         with:
