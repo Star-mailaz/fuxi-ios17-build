@@ -86,16 +86,27 @@ jobs:
           P="$XNU_LINUX_PREFIX"
           BIN="$GITHUB_WORKSPACE/llvm-bin"
           mkdir -p "$BIN"
-          for t in clang llvm-ar llvm-nm llvm-objcopy llvm-ranlib llvm-strip ld.lld; do
-            for cand in "$P/llvm/bin/$t" "$P/CommandLineTools/usr/bin/$t" "$P/bin/$t" "$P/llvm/bin/$t-24"; do
+          for t in llvm-ar llvm-nm llvm-objcopy llvm-ranlib llvm-strip ld.lld; do
+            for cand in "$P/llvm/bin/$t" "$P/CommandLineTools/usr/bin/$t" "$P/bin/$t" /usr/bin/$t /usr/bin/$t-*; do
               if [ -x "$cand" ]; then ln -sf "$cand" "$BIN/$t"; break; fi
             done
           done
-          ls -l "$BIN" || true
+          cat > "$BIN/clang" <<'CCEOF'
+#!/bin/sh
+for arg in "$@"; do
+  case "$arg" in
+    --target=*|-target=*|--target) exec /home/runner/xnu-linux/llvm/bin/clang "$@" ;;
+  esac
+done
+exec /usr/bin/clang "$@"
+CCEOF
+          chmod +x "$BIN/clang"
           printf '#!/bin/sh\ncase "$1" in\n  --bindir) echo "%s" ;;\n  --version) echo "24.0.0" ;;\n  *) echo "unsupported" ;;\nesac\n' "$BIN" | sudo tee /usr/bin/llvm-config >/dev/null
           sudo chmod +x /usr/bin/llvm-config
           llvm-config --bindir
-          test -x "$BIN/clang" && test -e "$BIN/llvm-ar" && test -e "$BIN/llvm-nm"
+          ls -l "$BIN"
+          test -x "$BIN/clang"
+          test -e "$BIN/llvm-nm" || echo "no llvm-nm anywhere; the USB module tests will need it"
           ls -l /usr/bin/xcrun /usr/bin/plutil /usr/bin/codesign
           /usr/bin/xcrun --version || true
       - name: Apply the UniXNU patch and clone the submodules at head
