@@ -45,6 +45,16 @@ jobs:
           sudo ldconfig
           ldconfig -p | grep -m1 libdispatch || true
           git clone --depth 1 https://github.com/Allenwdk/xnu-linux-toolchain "$GITHUB_WORKSPACE/tc"
+          # toolchain/ holds symlinks such as csh -> tcsh; point the dangling ones at the system tools.
+          cd "$GITHUB_WORKSPACE/tc/toolchain"
+          for f in *; do
+            [ -L "$f" ] || continue
+            [ -e "$f" ] && continue
+            base=$(basename "$(readlink "$f")")
+            p=$(command -v "$base" 2>/dev/null || true)
+            if [ -n "$p" ]; then ln -sf "$p" "$f"; echo "fixed $f -> $p"; else echo "unresolved $f -> $base"; fi
+          done
+          cd "$GITHUB_WORKSPACE"
           "$GITHUB_WORKSPACE/tc/bootstrap.sh" --prefix "$XNU_LINUX_PREFIX" --jobs 8
           ls "$XNU_LINUX_PREFIX/bin" | head -20
 
