@@ -37,14 +37,23 @@ jobs:
           git clone --depth 1 https://github.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17 kerfand
           cp -R kerfand/ios17 device-ios17
 
-      - name: Apply the UniXNU patch, then init submodules
+      - name: Apply the UniXNU patch and clone the submodules at head
         working-directory: work
         run: |
           set -eux
           git -C unixnu apply "$(pwd)"/kerfand/unixnu/commits/UniXNU/*.patch
-          git -C unixnu submodule update --init --recursive --depth 1 || \
-            git -C unixnu submodule update --init --recursive
-          ls unixnu/drivers unixnu/kits | head -30
+          cd unixnu
+          git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read key path; do
+            urlkey=$(echo "$key" | sed 's/[.]path$/.url/')
+            url=$(git config -f .gitmodules --get "$urlkey")
+            if [ -z "$(ls -A "$path" 2>/dev/null)" ]; then
+              rm -rf "$path"
+              git clone --depth 1 --quiet "$url" "$path" && echo "cloned $path" || echo "CLONE FAILED $path $url"
+            else
+              echo "present $path"
+            fi
+          done
+          ls drivers kits | head -40
 
       - name: Copy the untracked files
         working-directory: work
@@ -57,13 +66,13 @@ jobs:
         working-directory: work
         run: |
           set +e
-          base () { repo=\$1; sha=\$2
-            if git -C "\$repo" fetch -q --depth 1 origin "\$sha" 2>/dev/null; then git -C "\$repo" checkout -q "\$sha" && echo "  base \$sha"; else echo "  base \$sha unavailable"; fi; }
-          apply () { repo=\$1; name=\$2; patch=\$(pwd)/kerfand/unixnu/diffs/\$3
-            if [ ! -s "\$patch" ]; then echo "\$name: empty"; return 0; fi
-            if git -C "\$repo" apply "\$patch" 2>/dev/null; then echo "\$name: applied"; return 0; fi
-            if ( cd "\$repo" && patch -p1 -F3 -s < "\$patch" ) 2>/dev/null; then echo "\$name: applied (patch)"; return 0; fi
-            echo "\$name: FAILED"; }
+          base () { repo=$1; sha=$2
+            if git -C "$repo" fetch -q --depth 1 origin "$sha" 2>/dev/null; then git -C "$repo" checkout -q "$sha" && echo "  base $sha"; else echo "  base $sha unavailable"; fi; }
+          apply () { repo=$1; name=$2; patch=$(pwd)/kerfand/unixnu/diffs/$3
+            if [ ! -s "$patch" ]; then echo "$name: empty"; return 0; fi
+            if git -C "$repo" apply "$patch" 2>/dev/null; then echo "$name: applied"; return 0; fi
+            if ( cd "$repo" && patch -p1 -F3 -s < "$patch" ) 2>/dev/null; then echo "$name: applied (patch)"; return 0; fi
+            echo "$name: FAILED"; }
           base unixnu/drivers/Adreno740 a9a2cbb43b89d672e2921e19721a6438b738b17f
           base unixnu/drivers/AdrenoMetal 5d56587b301ed42b4742528aac9d3a40774ad9aa
           base unixnu/drivers/DarwinBoot 3c75734014cdab0acd9541e88057b7606ee7ae08
