@@ -262,6 +262,22 @@ jobs:
           fi
           find "$UNIXNU_OUT" -name kernel.macho | head
 
+      - name: Diagnose the failing archive
+        if: failure()
+        working-directory: work/unixnu
+        run: |
+          set +e
+          T="$GITHUB_WORKSPACE/work/unixnu/out-ios17/fuxi/tree"
+          [ -d "$T" ] || { echo "no tree at $T"; ls out-ios17 || true; exit 0; }
+          cd "$T"
+          python3 scripts/build-arm-driver.py Adreno740 > /tmp/adreno.log 2>&1
+          echo "rc=$?"
+          wc -l /tmp/adreno.log
+          echo "=== head"
+          sed -n '1,25p' /tmp/adreno.log
+          echo "=== markers"
+          grep -n "Stack dump\|Program arguments\|current parser token\|error:\|clang-24 -\|clang-24: " /tmp/adreno.log | head -20
+
       - name: Encrypt the kernel
         if: always()
         working-directory: work
