@@ -66,10 +66,10 @@ EDITS = (
      [("    if git(module, 'rev-parse', 'HEAD') != QUD_REVISION or git(xnu, 'rev-parse', 'HEAD') != XNU_REVISION:",
        "    if git(xnu, 'rev-parse', 'HEAD') != XNU_REVISION:")],
      None, False),
-    ('build-fuxi-usb-debug.py',
-     [("run([sys.executable, module / 'tests/check.py', '--target-clang', llvm / 'clang',",
-       "print('CI-NOTE skipping the QUD host model tests') if True else run([sys.executable, module / 'tests/check.py', '--target-clang', llvm / 'clang',")],
-     'CI-NOTE skipping', False),
+    ('test_usb_buffer.c',
+     [("static uint8_t storage[SOC_USB_LOG_BUFFER_BYTES], received[SOC_USB_LOG_BUFFER_BYTES];",
+       "static uint8_t storage[SOC_USB_LOG_BUFFER_BYTES], received[4u * 1024u * 1024u];")],
+     None, False),
 )
 
 
