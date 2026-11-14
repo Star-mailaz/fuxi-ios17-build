@@ -199,12 +199,28 @@ jobs:
           fi
           exit 0
 
-      - name: Instrument the libpthread archive step
-        working-directory: work/unixnu
+      - name: Fetch the VerifiedRoot policies
+        working-directory: work
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          B="https://api.github.com/repos/${{ github.repository }}"
+          curl -sS -H "Authorization: Bearer $GITHUB_TOKEN" "$B/actions/artifacts?name=verified-root-policies&per_page=1" -o art.json
+          id=$(python3 -c "import json;d=json.load(open('art.json'));print(d['artifacts'][0]['id'] if d['artifacts'] else '')")
+          [ -n "$id" ] || { echo "no verified-root-policies artifact yet"; exit 1; }
+          echo "artifact $id"
+          curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$B/actions/artifacts/$id/zip" -o vr.zip
+          rm -rf verified-root && mkdir verified-root
+          unzip -q vr.zip -d verified-root
+          find verified-root -maxdepth 2 -type f -exec ls -l {} +
+          echo "VERIFIED_ROOT_DIR=$GITHUB_WORKSPACE/work/verified-root" >> "$GITHUB_ENV"
+
+      - name: Instrument the archive builders
+        working-directory: work
         run: |
           set -eux
           python3 "$GITHUB_WORKSPACE/work/ci/instrument_archive.py" "$PWD"
-          grep -n "pthread object architecture" scripts/build-libpthread-kernel.py
 
       - name: Build the kernel
         working-directory: work/unixnu
