@@ -135,12 +135,16 @@ jobs:
           # The device scripts run from the assembled tree and import the kernel target helper,
           # which only exists in the UniXNU scripts directory. Seed the device scripts with it.
           # kernel_target.py exists on UniXNU main but not on the fuxi branch.
-          if [ ! -f unixnu/scripts/kernel_target.py ]; then
-            curl -fsSL "https://raw.githubusercontent.com/SadNutWall/UniXNU/main/scripts/kernel_target.py" -o unixnu/scripts/kernel_target.py || echo "download failed"
-          fi
-          mkdir -p device/scripts
-          cp -f unixnu/scripts/kernel_target.py device/scripts/kernel_target.py || echo "copy failed"
-          ls -l unixnu/scripts/kernel_target.py device/scripts/kernel_target.py || true
+          for helper in kernel_target.py kc_image.py; do
+            if [ ! -f "unixnu/scripts/$helper" ]; then
+              curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
+                "https://api.github.com/repos/SadNutWall/UniXNU/contents/scripts/$helper?ref=main" \
+                -o "unixnu/scripts/$helper" || echo "download $helper failed"
+            fi
+            mkdir -p device/scripts
+            cp -f "unixnu/scripts/$helper" "device/scripts/$helper" || echo "copy $helper failed"
+            ls -l "unixnu/scripts/$helper" "device/scripts/$helper" || true
+          done
 
       - name: Apply the module diffs to the real submodules
         working-directory: work
