@@ -206,7 +206,18 @@ jobs:
         run: |
           set -eux
           ./unixnu defconfig fuxi_ios17_kernel_defconfig -D "$GITHUB_WORKSPACE/work/device-ios17"
+          set +e
           ./unixnu build kernel -D "$GITHUB_WORKSPACE/work/device-ios17" -j 8
+          rc=$?
+          set -e
+          if [ $rc -ne 0 ]; then
+            echo "== build failed rc=$rc"
+            for f in $(ls -t "$UNIXNU_OUT"/fuxi/logs/*.log 2>/dev/null | head -3); do
+              echo "=== $f"
+              tail -60 "$f"
+            done
+            exit $rc
+          fi
           find "$UNIXNU_OUT" -name kernel.macho | head
 
       - name: Encrypt the kernel
@@ -236,6 +247,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: kernel-logs
-          path: work/unixnu/out-ios17/logs/*.log
+          path: |
+            work/unixnu/out-ios17/logs/*.log
+            work/unixnu/out-ios17/*/logs/*.log
           if-no-files-found: warn
           retention-days: 7
