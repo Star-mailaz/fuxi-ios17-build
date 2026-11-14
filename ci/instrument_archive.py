@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Patch the UniXNU archive builders for the GitHub Actions build.
+"""Patch the UniXNU build inputs for the GitHub Actions build.
 
 Every copy of each target file under the given root is patched: the build tree
-assembles its scripts from unixnu/scripts and the device overlays, so the source
-of a given script differs per file.
+assembles its scripts from unixnu/scripts and the device overlays.
 
-1. build-libpthread-kernel.py asserts every object header is exactly
-   (MH_MAGIC_64, CPU_TYPE_ARM64, subtype 0, MH_OBJECT). The bootstrap object comes
-   from the XNU build recipe, which carries --target=arm64e-apple-ios17.0 -arch arm64e,
-   so it is arm64e (subtype 2 plus the ptrauth ABI bit). Accept both.
+1. build-libpthread-kernel.py: accept arm64e bootstrap objects (the XNU recipe
+   compiles that one with --target=arm64e-apple-ios17.0 -arch arm64e).
 
-2. build-ios17-verified-root.py reads four sample blocks out of userdata-root.img,
-   which only exists on the author machine. Fall back to zero blocks.
+2. build-ios17-verified-root.py: zero sample blocks when userdata-root.img is absent.
 
-3. The pinned QcomXnuUsbDebug module has no SXNU_CONTROL_VERB_REBOOT_FASTBOOT, so
-   prepare-fuxi-usb-debug.py aborts on its anchor. Drop that archive and its link
-   entry so the kernel can proceed without the USB debug channel.
+3. Drop the USB debug archive: the pinned QcomXnuUsbDebug has no
+   SXNU_CONTROL_VERB_REBOOT_FASTBOOT verb, so its prepare step aborts.
+
+4. Drop the Adreno GPU archives and CONFIG_XNU_NATIVE_ADRENO: clang 24 from the
+   Linux XNU toolchain segfaults in ParseBraceInitializer while compiling
+   NativeAdrenoService.cpp. The GPU layer is not needed for the first boot.
 """
 import sys
 from pathlib import Path
@@ -48,13 +47,21 @@ VERIFIED_OPEN_NEW = "with (IMAGE.open('rb') if IMAGE.is_file() else open(os.devn
 USB_ARCHIVE = '"build-fuxi-usb-debug.py",'
 USB_LINK = ' {tree}/.cache/fuxi-qud-build/libQcomXnuUsbDebug.a'
 
+ADRENO_ARCHIVES = [
+    '"build-arm-driver.py Adreno740",',
+    '"build-adreno740-kits.py",',
+    '"build-adreno740-accelerator.py",',
+]
+ADRENO_CONFIG_OLD = 'CONFIG_XNU_NATIVE_ADRENO=y'
+ADRENO_CONFIG_NEW = 'CONFIG_XNU_NATIVE_ADRENO=n'
+
 EDITS = (
     ('build-libpthread-kernel.py', [(LIBPTHREAD_OLD, LIBPTHREAD_NEW)], 'CI-ARCH ', True),
     ('build-ios17-verified-root.py',
      [(VERIFIED_REPORT_OLD, VERIFIED_REPORT_NEW), (VERIFIED_OPEN_OLD, VERIFIED_OPEN_NEW)],
      'os.devnull', True),
-    ('board.toml', [(USB_ARCHIVE, '')], None, False),
-    ('fuxi_ios17_kernel_defconfig', [(USB_LINK, '')], None, False),
+    ('board.toml', [(USB_ARCHIVE, '')] + [(name, '') for name in ADRENO_ARCHIVES], None, False),
+    ('fuxi_ios17_kernel_defconfig', [(USB_LINK, ''), (ADRENO_CONFIG_OLD, ADRENO_CONFIG_NEW)], None, False),
 )
 
 
@@ -77,15 +84,14 @@ def main(root):
             if marker and marker in text:
                 already += 1
                 continue
-            missing = [old for old, _ in edits if old not in text]
-            if missing:
+            present = [(old, new) for old, new in edits if old in text]
+            if not present:
                 skipped += 1
-                print('skip', path, '(%d bytes, no anchor: %r)' % (len(text), missing[0][:60]))
                 continue
-            for old, new in edits:
+            for old, new in present:
                 text = text.replace(old, new, 1)
             path.write_text(text)
-            print('PATCHED', path)
+            print('PATCHED', path, '(%d edits)' % len(present))
             patched += 1
         print('%s: patched=%d already=%d skipped=%d' % (name, patched, already, skipped))
         if required and patched == 0 and already == 0:
