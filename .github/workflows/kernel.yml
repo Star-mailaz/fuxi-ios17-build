@@ -35,7 +35,9 @@ jobs:
           set -eux
           git clone --depth 1 --branch fuxi https://github.com/SadNutWall/UniXNU unixnu
           git clone --depth 1 https://github.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17 kerfand
+          cp -R kerfand/device device
           cp -R kerfand/ios17 device-ios17
+          ls -l device-ios17 | head -6
 
       - name: Apply the UniXNU patch and clone the submodules at head
         working-directory: work
