@@ -57,9 +57,22 @@ jobs:
         working-directory: work
         run: |
           set +e
-          apply () { repo=$1; name=$2; patch=kerfand/unixnu/diffs/$3
-            if [ ! -s "$patch" ]; then echo "$name: empty"; return 0; fi
-            if git -C "$repo" apply "$(pwd)/$patch"; then echo "$name: applied"; else echo "$name: FAILED"; fi; }
+          base () { repo=\$1; sha=\$2
+            if git -C "\$repo" fetch -q --depth 1 origin "\$sha" 2>/dev/null; then git -C "\$repo" checkout -q "\$sha" && echo "  base \$sha"; else echo "  base \$sha unavailable, keeping head"; fi; }
+          apply () { repo=\$1; name=\$2; patch=kerfand/unixnu/diffs/\$3
+            if [ ! -s "\$patch" ]; then echo "\$name: empty diff"; return 0; fi
+            if git -C "\$repo" apply "\$(pwd)/\$patch" 2>/dev/null; then echo "\$name: applied (git)"; return 0; fi
+            if ( cd "\$repo" && patch -p1 -F3 -s < "\$(pwd)/../\$patch" ) 2>/dev/null; then echo "\$name: applied (patch -F3)"; return 0; fi
+            echo "\$name: FAILED"; }
+          base modules/Adreno740 a9a2cbb43b89d672e2921e19721a6438b738b17f
+          base modules/AdrenoMetal 5d56587b301ed42b4742528aac9d3a40774ad9aa
+          base modules/DarwinBoot 3c75734014cdab0acd9541e88057b7606ee7ae08
+          base modules/GopFramebuffer 19ef3a75ad2c53da85b8d923553d922716fce377
+          base modules/VerifiedRoot 974f043d0c71ba2e60331483a41c6c6d35274ee3
+          base modules/XnuPrelink ddb7afa0046668b3d44efe0cc5c986f1c442644d
+          git -C modules/XnuPrelink am --abort 2>/dev/null
+          git -C modules/XnuPrelink -c user.name=t -c user.email=t@t am -3 "\$(pwd)/kerfand/unixnu/commits/kits_XnuPrelink/"*.patch 2>/dev/null || \
+            git -C modules/XnuPrelink apply "\$(pwd)/kerfand/unixnu/commits/kits_XnuPrelink/"*.patch 2>/dev/null || echo "XnuPrelink commit patch failed"
           apply modules/Adreno740 Adreno740 drivers_Adreno740.diff
           apply modules/AdrenoMetal AdrenoMetal drivers_AdrenoMetal.diff
           apply modules/DarwinBoot DarwinBoot drivers_DarwinBoot.diff
@@ -86,7 +99,7 @@ jobs:
           member=$(unzip -l ipsw.zip | awk 'tolower($4) ~ /kernelcache/ {print $4}' | grep -i release | head -1)
           mkdir -p kernel
           unzip -o -q ipsw.zip "$member" -d kernel
-          python3 -m pip install --quiet lzfse
+          python3 -m pip install --quiet --break-system-packages lzfse || python3 -m pip install --quiet lzfse
           mkdir -p "$UNIXNU_OUT/ipsw/21H16"
           python3 tools/extract_kernelcache.py "kernel/$member" -o "$UNIXNU_OUT/ipsw/21H16/kernelcache.decompressed"
           ls -l "$UNIXNU_OUT/ipsw/21H16/kernelcache.decompressed"
@@ -107,7 +120,7 @@ jobs:
         working-directory: work
         run: |
           set +e
-          python3 -m pip install --quiet cryptography
+          python3 -m pip install --quiet --break-system-packages cryptography || python3 -m pip install --quiet cryptography
           k=$(find unixnu/out-ios17 -name kernel.macho | head -1)
           [ -n "$k" ] || { echo "no kernel.macho"; exit 0; }
           gzip -9 -n -c "$k" > kernel.macho.gz
