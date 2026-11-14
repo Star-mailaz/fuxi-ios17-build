@@ -1,0 +1,135 @@
+name: kernel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: arm64e kernel for 21H16
+    runs-on: macos-26
+    timeout-minutes: 300
+    env:
+      UNIXNU_OUT: ${{ github.workspace }}/work/unixnu/out-ios17
+      UNIXNU_XNU_ARCH: arm64e
+      UNIXNU_FILESET_KERNEL_FIRST: "1"
+      XNU_KERNEL_CHAINED_FIXUPS: "1"
+      JOBS: "8"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: work
+
+      - name: Toolchain
+        run: |
+          set -eux
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          brew list llvm >/dev/null 2>&1 || brew install llvm
+          python3 -V
+
+      - name: Clone the upstreams
+        working-directory: work
+        run: |
+          set -eux
+          git clone --depth 1 --branch fuxi https://github.com/SadNutWall/UniXNU unixnu
+          git clone --depth 1 https://github.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17 kerfand
+          for pair in Adreno740:UniXNU/Adreno740 AdrenoMetal:UniXNU/AdrenoMetal \
+                      DarwinBoot:UniXNU/DarwinBoot GopFramebuffer:UniXNU/GopFramebuffer \
+                      VerifiedRoot:UniXNU/VerifiedRoot XnuPrelink:UniXNU/XnuPrelink; do
+            name=${pair%%:*}; repo=${pair#*:}
+            git clone --depth 1 "https://github.com/$repo" "modules/$name" || true
+          done
+
+      - name: Apply the author's UniXNU patch
+        working-directory: work
+        run: |
+          set -eux
+          git -C unixnu apply $(pwd)/kerfand/unixnu/commits/UniXNU/*.patch
+          cp -rv kerfand/unixnu/files/. unixnu/ 2>/dev/null || true
+          cp -rv kerfand/unixnu/patches/. unixnu/patches/ 2>/dev/null || true
+          ls unixnu/patches | head
+
+      - name: Apply the module diffs
+        working-directory: work
+        run: |
+          set +e
+          apply () { repo=$1; name=$2; patch=kerfand/unixnu/diffs/$3
+            if [ ! -s "$patch" ]; then echo "$name: empty"; return 0; fi
+            if git -C "$repo" apply "$(pwd)/$patch"; then echo "$name: applied"; else echo "$name: FAILED"; fi; }
+          apply modules/Adreno740 Adreno740 drivers_Adreno740.diff
+          apply modules/AdrenoMetal AdrenoMetal drivers_AdrenoMetal.diff
+          apply modules/DarwinBoot DarwinBoot drivers_DarwinBoot.diff
+          apply modules/GopFramebuffer GopFramebuffer drivers_GopFramebuffer.diff
+          apply modules/VerifiedRoot VerifiedRoot kits_VerifiedRoot.diff
+          apply modules/XnuPrelink XnuPrelink kits_XnuPrelink.diff
+          exit 0
+
+      - name: Wire the iOS 17 device overlay
+        working-directory: work
+        run: |
+          set -eux
+          cp -R kerfand/ios17 device-ios17
+          ls device-ios17 | head
+          ls device-ios17/configs
+
+      - name: Download IPSW and extract the kernelcache
+        working-directory: work
+        run: |
+          set -eux
+          curl -sS -m 60 "https://api.ipsw.me/v4/device/iPhone15,2?type=ipsw" -o ipsw.json
+          url=$(python3 -c "import json;d=json.load(open('ipsw.json'));print([f for f in d['firmwares'] if f['buildid']=='21H16'][0]['url'])")
+          curl -L --retry 3 -o ipsw.zip "$url"
+          member=$(unzip -l ipsw.zip | awk 'tolower($4) ~ /kernelcache/ {print $4}' | grep -i release | head -1)
+          mkdir -p kernel
+          unzip -o -q ipsw.zip "$member" -d kernel
+          python3 -m pip install --quiet lzfse
+          mkdir -p "$UNIXNU_OUT/ipsw/21H16"
+          python3 tools/extract_kernelcache.py "kernel/$member" -o "$UNIXNU_OUT/ipsw/21H16/kernelcache.decompressed"
+          ls -l "$UNIXNU_OUT/ipsw/21H16/kernelcache.decompressed"
+
+      - name: Build the kernel
+        working-directory: work/unixnu
+        run: |
+          set +e
+          ./unixnu defconfig fuxi_ios17_kernel_defconfig -D "$GITHUB_WORKSPACE/work/device-ios17" 2>&1 | tail -20
+          echo "defconfig=$?"
+          ./unixnu build kernel -D "$GITHUB_WORKSPACE/work/device-ios17" -j 8 2>&1 | tail -120
+          echo "build=$?"
+          find . -name 'kernel.macho' -o -name 'kernel' -type f 2>/dev/null | head
+          exit 0
+
+      - name: Encrypt the kernel
+        if: always()
+        working-directory: work
+        run: |
+          set +e
+          python3 -m pip install --quiet cryptography
+          k=$(find unixnu/out-ios17 -name kernel.macho | head -1)
+          [ -n "$k" ] || { echo "no kernel.macho"; exit 0; }
+          gzip -9 -n -c "$k" > kernel.macho.gz
+          shasum -a 256 "$k" | awk '{print $1"  kernel.macho"}' > kernel.macho.sha256
+          python3 tools/pack_secret.py ci/recipient.pem secret kernel.macho.gz kernel.macho.sha256
+          ls -l secret
+
+      - name: Upload the encrypted kernel
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-encrypted
+          path: work/secret/*
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Upload the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-logs
+          path: |
+            work/unixnu/out-ios17/logs/*.log
+          if-no-files-found: warn
+          retention-days: 7
