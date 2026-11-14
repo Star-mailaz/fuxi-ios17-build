@@ -103,11 +103,11 @@ jobs:
           if [ ! -f ci/skip_usb_debug ]; then echo "USB debug stage kept"; exit 0; fi
           echo "marker present: removing the USB debug stage"
           for f in $(grep -rl "prepare-fuxi-usb-debug.py" device-ios17/scripts device/scripts 2>/dev/null); do
-            sed -i 's|prepare-fuxi-usb-debug.py|true # skipped|g' "$f"
+            perl -pi -e 's{prepare-fuxi-usb-debug[.]py}{true - skipped}g' "$f"
             echo "patched $f"
           done
           for c in device-ios17/configs/fuxi_ios17_kernel_defconfig device/configs/fuxi_ios17_kernel_defconfig; do
-            [ -f "$c" ] && sed -i '/usb-debug/d' "$c" || true
+            [ -f "$c" ] && perl -ni -e 'print unless /usb-debug/' "$c" || true
           done
 
       - name: Download IPSW and extract the kernelcache
