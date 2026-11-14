@@ -1,0 +1,81 @@
+name: ipsw
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fetch:
+    name: Download 21H16 IPSW and extract the kernelcache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: work
+
+      - name: Disk space
+        run: df -h /
+
+      - name: Install tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq unzip p7zip-full python3 curl jq zstd
+
+      - name: Resolve the IPSW URL
+        working-directory: work
+        run: |
+          set -eux
+          curl -sS -m 60 "https://api.ipsw.me/v4/device/iPhone15,2?type=ipsw" -o ipsw.json
+          python3 - <<'PY' > url.txt
+          import json
+          d=json.load(open('ipsw.json',encoding='utf-8'))
+          hit=[f for f in d['firmwares'] if f['buildid']=='21H16']
+          print(hit[0]['url'])
+          PY
+          cat url.txt
+
+      - name: Download the IPSW
+        working-directory: work
+        run: |
+          set -eux
+          curl -L --retry 3 -o ipsw.zip "$(cat url.txt)"
+          ls -l ipsw.zip
+          df -h /
+
+      - name: List the KernelCache members
+        working-directory: work
+        run: |
+          unzip -l ipsw.zip | grep -i kernelcache | head -20 || true
+
+      - name: Extract the KernelCache
+        working-directory: work
+        run: |
+          set -eux
+          member=$(unzip -l ipsw.zip | awk '/KernelCache/ {print $4}' | head -1)
+          echo "member=$member"
+          mkdir -p kernel
+          unzip -o ipsw.zip "$member" -d kernel
+          find kernel -type f -exec ls -l {} \;
+          file kernel/* 2>/dev/null || true
+          head -c 32 kernel/* | xxd | head -3
+
+      - name: Try to decompress with the ipsw tool
+        working-directory: work
+        run: |
+          set +e
+          curl -sSL -o ipsw.tar.gz https://github.com/blacktop/ipsw/releases/latest/download/ipsw_linux_amd64.tar.gz
+          tar xzf ipsw.tar.gz 2>/dev/null
+          ls -l ipsw 2>/dev/null
+          ./ipsw version 2>/dev/null | head -3
+          ./ipsw extract --kernel ipsw.zip -o kernel2 2>&1 | tail -20
+          ls -l kernel2 2>/dev/null
+          exit 0
+
+      - name: Report
+        if: always()
+        run: |
+          ls -lR work/kernel work/kernel2 2>/dev/null | head -40
+          df -h /
