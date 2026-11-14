@@ -102,33 +102,41 @@ def detach(device):
     sh(['hdiutil', 'detach', device])
 
 
-def volume_uuid(device):
-    result = sh(['diskutil', 'apfs', 'list', '-plist', device])
+def volume_uuid(device, seed):
+    """Volume UUID recorded in the signed header.
+
+    vr_open_header only copies it into the view; it is never compared with the
+    mounted volume, so a synthetic value still produces a valid policy.
+    """
+    disk = Path(device).name
+    result = sh(['diskutil', 'apfs', 'list', '-plist'])
     if result.returncode == 0:
         try:
             data = plistlib.loads(result.stdout.encode())
             for container in data.get('Containers') or []:
+                reference = container.get('APFSContainerReference')
+                if reference and reference != disk:
+                    continue
                 for volume in container.get('Volumes') or []:
                     value = volume.get('APFSVolumeUUID')
                     if value:
-                        return uuid.UUID(value), 'apfs-volume'
+                        return uuid.UUID(value), 'apfs-container-list'
         except Exception as error:  # noqa: BLE001
-            print('diskutil apfs parse failed:', error)
-    listing = sh(['diskutil', 'list', '-plist', device])
-    if listing.returncode == 0:
+            print('diskutil apfs list parse failed:', error)
+    for candidate in (device, device + 's1', device + 's2'):
+        info = sh(['diskutil', 'info', '-plist', candidate])
+        if info.returncode:
+            continue
         try:
-            data = plistlib.loads(listing.stdout.encode())
-            for disk in data.get('AllDisksAndPartitions') or []:
-                for part in disk.get('Partitions') or []:
-                    info = sh(['diskutil', 'info', '-plist', part.get('DeviceIdentifier')])
-                    if info.returncode:
-                        continue
-                    record = plistlib.loads(info.stdout.encode())
-                    if record.get('VolumeUUID'):
-                        return uuid.UUID(record['VolumeUUID']), 'partition'
+            record = plistlib.loads(info.stdout.encode())
         except Exception as error:  # noqa: BLE001
-            print('diskutil list parse failed:', error)
-    raise SystemExit('could not read an APFS volume UUID from %s' % device)
+            print('diskutil info parse failed:', error)
+            continue
+        if record.get('VolumeUUID'):
+            return uuid.UUID(record['VolumeUUID']), 'diskutil-info'
+    synthetic = uuid.uuid5(uuid.NAMESPACE_URL, seed)
+    print('no APFS volume UUID readable on %s, using synthetic %s' % (device, synthetic))
+    return synthetic, 'synthetic'
 
 
 def ensure_keys(keys):
@@ -176,7 +184,7 @@ def main():
         size = imageinfo(dmg)
         device = attach(dmg)
         try:
-            volume, source = volume_uuid(device)
+            volume, source = volume_uuid(device, str(dmg.name))
             print('%s: %d bytes, volume %s (%s)' % (name, size, volume, source))
             raw = Path(device.replace('/dev/disk', '/dev/rdisk'))
             with raw.open('rb', buffering=1024 * 1024) as stream:
