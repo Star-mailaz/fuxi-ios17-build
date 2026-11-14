@@ -91,15 +91,7 @@ jobs:
               if [ -x "$cand" ]; then ln -sf "$cand" "$BIN/$t"; break; fi
             done
           done
-          cat > "$BIN/clang" <<'CCEOF'
-#!/bin/sh
-for arg in "$@"; do
-  case "$arg" in
-    --target=*|-target=*|--target) exec /home/runner/xnu-linux/llvm/bin/clang "$@" ;;
-  esac
-done
-exec /usr/bin/clang "$@"
-CCEOF
+          printf '#!/bin/sh\nfor arg in "$@"; do\n  case "$arg" in\n    --target=*|-target=*|--target) exec /home/runner/xnu-linux/llvm/bin/clang "$@" ;;\n  esac\ndone\nexec /usr/bin/clang "$@"\n' > "$BIN/clang"
           chmod +x "$BIN/clang"
           printf '#!/bin/sh\ncase "$1" in\n  --bindir) echo "%s" ;;\n  --version) echo "24.0.0" ;;\n  *) echo "unsupported" ;;\nesac\n' "$BIN" | sudo tee /usr/bin/llvm-config >/dev/null
           sudo chmod +x /usr/bin/llvm-config
