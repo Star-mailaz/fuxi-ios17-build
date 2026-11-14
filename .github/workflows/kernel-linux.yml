@@ -199,6 +199,13 @@ jobs:
           fi
           exit 0
 
+      - name: Instrument the libpthread archive step
+        working-directory: work/unixnu
+        run: |
+          set -eux
+          python3 "$GITHUB_WORKSPACE/work/ci/instrument_archive.py" "$PWD"
+          grep -n "pthread object architecture" scripts/build-libpthread-kernel.py
+
       - name: Build the kernel
         working-directory: work/unixnu
         env:
@@ -250,5 +257,6 @@ jobs:
           path: |
             work/unixnu/out-ios17/logs/*.log
             work/unixnu/out-ios17/*/logs/*.log
+            work/unixnu/build/libpthread-kernel/*.log
           if-no-files-found: warn
           retention-days: 7
