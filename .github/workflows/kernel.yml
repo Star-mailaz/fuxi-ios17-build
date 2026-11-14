@@ -103,7 +103,7 @@ jobs:
           if [ ! -f ci/skip_usb_debug ]; then echo "USB debug stage kept"; exit 0; fi
           echo "marker present: removing the USB debug stage"
           for f in $(grep -rl "prepare-fuxi-usb-debug.py" device-ios17/scripts device/scripts 2>/dev/null); do
-            perl -pi -e 's{prepare-fuxi-usb-debug[.]py}{true - skipped}g' "$f"
+            perl -pi -e 's{^.*prepare-fuxi-usb-debug[.]py.*$}{true}g' "$f"
             echo "patched $f"
           done
           for c in device-ios17/configs/fuxi_ios17_kernel_defconfig device/configs/fuxi_ios17_kernel_defconfig; do
@@ -124,6 +124,22 @@ jobs:
           mkdir -p "$UNIXNU_OUT/ipsw/21H16"
           python3 tools/extract_kernelcache.py "kernel/$member" -o "$UNIXNU_OUT/ipsw/21H16/kernelcache.decompressed"
           ls -l "$UNIXNU_OUT/ipsw/21H16/kernelcache.decompressed"
+
+      - name: Fetch the feeds and pin refer/xnu
+        working-directory: work/unixnu
+        run: |
+          set +e
+          DEV="$GITHUB_WORKSPACE/work/device-ios17"
+          ./unixnu fetch -D "$DEV" 2>&1 | tail -20
+          X="$UNIXNU_OUT/refer/xnu"
+          if [ -d "$X/.git" ]; then
+            echo "refer/xnu before: $(git -C "$X" rev-parse HEAD)"
+            git -C "$X" fetch -q --depth 1 origin d8b80295118ef25ac3a784134bcf95cd8e88109f && git -C "$X" checkout -q d8b80295118ef25ac3a784134bcf95cd8e88109f
+            echo "refer/xnu after:  $(git -C "$X" rev-parse HEAD)"
+          else
+            echo "no refer/xnu checkout"
+          fi
+          exit 0
 
       - name: Build the kernel
         working-directory: work/unixnu
