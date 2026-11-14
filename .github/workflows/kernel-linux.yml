@@ -77,6 +77,13 @@ jobs:
         with:
           path: /home/runner/xnu-linux
           key: xnu-linux-toolchain-v1
+      - name: Install the toolchain shims into /usr/bin
+        run: |
+          set -eux
+          for t in xcrun plutil codesign; do
+            if [ -x "$XNU_LINUX_PREFIX/bin/$t" ]; then sudo ln -sf "$XNU_LINUX_PREFIX/bin/$t" "/usr/bin/$t"; fi
+          done
+          ls -l /usr/bin/xcrun || echo "no xcrun"
       - name: Apply the UniXNU patch and clone the submodules at head
         working-directory: work
         run: |
