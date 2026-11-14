@@ -37,7 +37,12 @@ jobs:
           git clone --depth 1 https://github.com/Kerfand/UniXNU-Fuxi-Arm64e-iOS17 kerfand
           cp -R kerfand/device device
           cp -R kerfand/ios17 device-ios17
-          ls -l device-ios17 | head -6
+          # QcomXnuUsbDebug is a public submodule of the device repository (xiaoleGun), pinned.
+          rm -rf device/drivers/QcomXnuUsbDebug
+          git clone --quiet https://github.com/xiaoleGun/QcomXnuUsbDebug.git device/drivers/QcomXnuUsbDebug
+          git -C device/drivers/QcomXnuUsbDebug fetch -q --depth 1 origin 83be5782ad7227d7d245862ce1ae3272cae14242
+          git -C device/drivers/QcomXnuUsbDebug checkout -q 83be5782ad7227d7d245862ce1ae3272cae14242
+          git -C device/drivers/QcomXnuUsbDebug rev-parse HEAD
 
       - name: Apply the UniXNU patch and clone the submodules at head
         working-directory: work
