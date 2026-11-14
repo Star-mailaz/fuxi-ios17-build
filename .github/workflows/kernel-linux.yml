@@ -190,7 +190,6 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -eux
-          source "$GITHUB_WORKSPACE/tc/env.sh"
           ./unixnu defconfig fuxi_ios17_kernel_defconfig -D "$GITHUB_WORKSPACE/work/device-ios17"
           ./unixnu build kernel -D "$GITHUB_WORKSPACE/work/device-ios17" -j 8
           find "$UNIXNU_OUT" -name kernel.macho | head
