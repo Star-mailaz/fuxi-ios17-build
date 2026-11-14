@@ -128,6 +128,8 @@ jobs:
 
       - name: Copy the untracked files
         working-directory: work
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -eux
           cp -R kerfand/unixnu/files/. unixnu/ 2>/dev/null || true
@@ -145,6 +147,13 @@ jobs:
             cp -f "unixnu/scripts/$helper" "device/scripts/$helper" || echo "copy $helper failed"
             ls -l "unixnu/scripts/$helper" "device/scripts/$helper" || true
           done
+          KIT=unixnu/kits/XnuPrelink
+          if [ -d "$KIT" ] && [ ! -f "$KIT/kc_image.py" ]; then
+            curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repos/UniXNU/XnuPrelink/contents/kc_image.py?ref=main" \
+              -o "$KIT/kc_image.py" || echo "kc_image download failed"
+          fi
+          ls -l "$KIT/kc_image.py" || true
 
       - name: Apply the module diffs to the real submodules
         working-directory: work
