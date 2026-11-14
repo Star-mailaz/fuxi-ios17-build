@@ -75,9 +75,13 @@ jobs:
           cp -R kerfand/unixnu/patches/. unixnu/patches/ 2>/dev/null || true
           # The device scripts run from the assembled tree and import the kernel target helper,
           # which only exists in the UniXNU scripts directory. Seed the device scripts with it.
+          # kernel_target.py exists on UniXNU main but not on the fuxi branch.
+          if [ ! -f unixnu/scripts/kernel_target.py ]; then
+            curl -fsSL "https://raw.githubusercontent.com/SadNutWall/UniXNU/main/scripts/kernel_target.py" -o unixnu/scripts/kernel_target.py || echo "download failed"
+          fi
           mkdir -p device/scripts
-          cp -f unixnu/scripts/kernel_target.py device/scripts/kernel_target.py || echo "copy of kernel_target.py failed"
-          ls -l device/scripts/kernel_target.py || echo "kernel_target.py still missing"
+          cp -f unixnu/scripts/kernel_target.py device/scripts/kernel_target.py || echo "copy failed"
+          ls -l unixnu/scripts/kernel_target.py device/scripts/kernel_target.py || true
 
       - name: Apply the module diffs to the real submodules
         working-directory: work
