@@ -47,8 +47,9 @@ jobs:
         run: |
           set -eux
           ls kerfand/unixnu/commits/UniXNU/
-          git -C unixnu apply --stat kerfand/unixnu/commits/UniXNU/*.patch
-          git -C unixnu apply kerfand/unixnu/commits/UniXNU/*.patch
+          P="$(pwd)"/kerfand/unixnu/commits/UniXNU/*.patch
+          git -C unixnu apply --stat $P
+          git -C unixnu apply $P
           echo "--- applied"
       - name: Copy the author's untracked files
         working-directory: work
