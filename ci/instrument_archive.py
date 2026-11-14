@@ -60,8 +60,8 @@ EDITS = (
     ('build-ios17-verified-root.py',
      [(VERIFIED_REPORT_OLD, VERIFIED_REPORT_NEW), (VERIFIED_OPEN_OLD, VERIFIED_OPEN_NEW)],
      'os.devnull', True),
-    ('board.toml', [(USB_ARCHIVE, '')] + [(name, '') for name in ADRENO_ARCHIVES], None, False),
-    ('fuxi_ios17_kernel_defconfig', [(USB_LINK, ''), (ADRENO_CONFIG_OLD, ADRENO_CONFIG_NEW)], None, False),
+    ('board.toml', [(name, '') for name in ADRENO_ARCHIVES], None, False),
+    ('fuxi_ios17_kernel_defconfig', [(ADRENO_CONFIG_OLD, ADRENO_CONFIG_NEW)], None, False),
 )
 
 
