@@ -83,6 +83,11 @@ jobs:
             [ -x "$src" ] || src="$XNU_LINUX_PREFIX/bin/$t"
             if [ -x "$src" ]; then sudo ln -sf "$src" "/usr/bin/$t"; echo "linked $t -> $src"; else echo "MISSING $t"; fi
           done
+          for t in llvm-config llvm-ar llvm-objcopy llvm-ranlib llvm-nm; do
+            src="$XNU_LINUX_PREFIX/llvm/bin/$t"
+            if [ -x "$src" ]; then sudo ln -sf "$src" "/usr/bin/$t"; echo "linked $t"; else echo "no $t in the toolchain"; fi
+          done
+          llvm-config --version || true
           ls -l /usr/bin/xcrun /usr/bin/plutil /usr/bin/codesign
           /usr/bin/xcrun --version || true
       - name: Apply the UniXNU patch and clone the submodules at head
