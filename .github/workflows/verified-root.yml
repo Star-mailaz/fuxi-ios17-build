@@ -9,7 +9,7 @@ permissions:
 jobs:
   policies:
     name: owner policies for 21H16
-    runs-on: macos-14
+    runs-on: macos-latest
     timeout-minutes: 150
     env:
       PYTHONUNBUFFERED: "1"
