@@ -61,21 +61,15 @@ jobs:
           find kernel -type f -exec ls -l {} \;
           for f in kernel/*; do echo "== $f"; head -c 16 "$f" | xxd; done
 
-      - name: Try to decompress with the ipsw tool
+      - name: Decompress the kernelcache
         working-directory: work
         run: |
-          set +e
-          curl -sSL -o ipsw.tar.gz https://github.com/blacktop/ipsw/releases/latest/download/ipsw_linux_amd64.tar.gz
-          tar xzf ipsw.tar.gz 2>/dev/null
-          ls -l ipsw 2>/dev/null
-          ./ipsw version 2>/dev/null | head -3
-          ./ipsw extract --kernel ipsw.zip -o kernel2 2>&1 | tail -20
-          ls -l kernel2 2>/dev/null
+          set -eux
+          python3 -m pip install --quiet lzfse || echo "lzfse install failed, LZSS only"
           f=$(ls kernel/* | head -1)
-          ./ipsw kernel dec "$f" -o kernelcache.decompressed 2>&1 | tail -10 || true
-          ./ipsw kernel dec "$f" > kernelcache.decompressed 2>/dev/null || true
-          ls -l kernelcache.decompressed 2>/dev/null && head -c 16 kernelcache.decompressed | xxd
-          exit 0
+          python3 tools/extract_kernelcache.py "$f" -o kernelcache.decompressed
+          ls -l kernelcache.decompressed
+          head -c 16 kernelcache.decompressed | xxd
 
       - name: Report
         if: always()
