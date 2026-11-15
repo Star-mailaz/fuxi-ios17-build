@@ -10,7 +10,7 @@ permissions:
 jobs:
   image:
     name: userdata-root for 21H16
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     timeout-minutes: 300
     env:
       PYTHONUNBUFFERED: "1"
@@ -19,26 +19,17 @@ jobs:
         with:
           path: work
 
-      - name: Disk space before
+      - name: Disk space
         run: df -h /
 
-      - name: Install dmg2img
-        run: |
-          set -eux
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq dmg2img || true
-          which dmg2img || echo "dmg2img missing"
-          dmg2img -h 2>&1 | head -3 || true
-
-      - name: Fetch the 21H16 IPSW
+      - name: Resolve the IPSW url
         working-directory: work
         run: |
           set -eux
           curl -sS -m 60 "https://api.ipsw.me/v4/device/iPhone15,2?type=ipsw" -o ipsw.json
           url=$(python3 -c "import json;d=json.load(open('ipsw.json'));print([f for f in d['firmwares'] if f['buildid']=='21H16'][0]['url'])")
-          echo "url=$url"
-          curl -L --retry 3 -o ipsw.zip "$url"
-          ls -l ipsw.zip
+          echo "IPSW_URL=$url" >> "$GITHUB_ENV"
+          echo "$url"
 
       - name: Fetch the signed policies
         working-directory: work
@@ -52,48 +43,41 @@ jobs:
           [ -n "$id" ] || { echo "no policy artifact"; exit 1; }
           curl -sSL -H "Authorization: Bearer $GITHUB_TOKEN" "$B/actions/artifacts/$id/zip" -o policies.zip
           mkdir -p policies && unzip -q policies.zip -d policies
-          ls -l policies/os policies/systemos | head -20
+          ls -l policies/os policies/systemos
 
-      - name: Build the userdata image
+      - name: Build the userdata parts
         working-directory: work
         run: |
           set -eux
+          python3 ci/prepare_userdata_mac.py --url "$IPSW_URL" --policies policies --out out --work disks
           df -h /
-          python3 ci/prepare_userdata.py --ipsw ipsw.zip --policies policies --out out/userdata-root.img --work disks
-          ls -l out/
-          df -h /
+          ls -l out
 
-      - name: Split and checksum
-        working-directory: work
+      - name: Split for transfer
+        working-directory: work/out
         run: |
           set -eux
-          cd out
-          sha256sum userdata-root.img > userdata-root.img.sha256
-          split -b 1800M -d -a 1 userdata-root.img part-
+          split -b 1800M -d -a 1 userdata-part0.img p0-
+          split -b 1800M -d -a 1 userdata-part1.img p1-
+          shasum -a 256 userdata-part0.img userdata-part1.img > parts.sha256
           ls -l
-          sha256sum part-* > parts.sha256
 
-      - name: Upload part A
+      - name: Upload part 0
         uses: actions/upload-artifact@v4
         with:
-          name: userdata-part-a
+          name: userdata-a
           path: |
-            work/out/part-0
-            work/out/part-1
-            work/out/part-2
+            work/out/p0-*
             work/out/parts.sha256
-            work/out/userdata-root.img.sha256
             work/out/userdata-root.json
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload part B
+      - name: Upload part 1
         uses: actions/upload-artifact@v4
         with:
-          name: userdata-part-b
+          name: userdata-b
           path: |
-            work/out/part-3
-            work/out/part-4
-            work/out/part-5
-          if-no-files-found: warn
+            work/out/p1-*
+          if-no-files-found: error
           retention-days: 14
