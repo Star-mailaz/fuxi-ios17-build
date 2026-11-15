@@ -107,10 +107,16 @@ jobs:
           set -eux
           git -C unixnu apply "$(pwd)"/kerfand/unixnu/commits/UniXNU/*.patch
           cd unixnu
+          # These two kits are pinned to revisions older than the code that uses them:
+          # kits/ArmSmmu4K predates ArmSmmu4KTablePages and kits/XnuPrelink predates kc_image.py.
+          HEAD_KITS=" kits/ArmSmmu4K kits/XnuPrelink "
           git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | while read key path; do
             urlkey=$(echo "$key" | sed 's/[.]path$/.url/')
             url=$(git config -f .gitmodules --get "$urlkey")
             pin=$(git ls-tree HEAD -- "$path" | awk '{print $3}')
+            case "$HEAD_KITS" in
+              *" $path "*) pin=""; echo "head-only $path";;
+            esac
             rm -rf "$path"
             git clone --depth 1 --quiet "$url" "$path" || echo "CLONE FAILED $path"
             if [ -n "$pin" ] && git -C "$path" fetch -q --depth 1 origin "$pin" 2>/dev/null; then
