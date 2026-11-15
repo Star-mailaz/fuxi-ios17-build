@@ -202,6 +202,23 @@ jobs:
           ls -l uefi-fuxi/Resources/DTBs
           od -A n -t x1 -N 8 uefi-fuxi/Resources/DTBs/fuxi.dtb
 
+      - name: Provide the NativeKeyStoreEvents driver
+        working-directory: work
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          dest=device/drivers/NativeKeyStoreEvents
+          mkdir -p "$dest"
+          for f in NativeKeyStoreEvents.cpp AKSKeyWrap.h AKSDeviceKey.cpp AKSCmac.h TegraSecurityEngine.cpp; do
+            curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw" \
+              "https://api.github.com/repositories/1447620419/contents/drivers/NativeKeyStoreEvents/$f" \
+              -o "$dest/$f" || echo "missing $f"
+          done
+          mkdir -p unixnu/drivers/NativeKeyStoreEvents
+          cp -f "$dest"/* unixnu/drivers/NativeKeyStoreEvents/
+          ls -l "$dest"
+
       - name: Plan B - drop the USB debug stage when the marker exists
         working-directory: work
         run: |
