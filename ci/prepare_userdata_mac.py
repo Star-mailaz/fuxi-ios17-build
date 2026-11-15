@@ -8,6 +8,9 @@ temporary dmg, attached read-only, streamed into the output, and deleted.
 Two output files, concatenated in order to get the flashed image:
   part0  manifest block + zero fill to 1 MiB + window "OS"
   part1  window "SystemOS" + objects "OS.hashes" and "SystemOS.hashes"
+
+The manifest needs the digest of every window, so it is written into part0 only
+after both parts are complete.
 """
 import argparse
 import hashlib
@@ -31,7 +34,6 @@ class HttpFile(io.RawIOBase):
         request = urllib.request.Request(url, method="HEAD")
         with urllib.request.urlopen(request, timeout=60) as response:
             self.size = int(response.headers["Content-Length"])
-            self.length = self.size
         self.pos = 0
 
     def seekable(self):
@@ -83,10 +85,10 @@ def pick_members(build_manifest):
 
 
 def extract_member(archive, member, target):
-    print("extracting", member, "->", target)
+    print("extracting", member, "->", target, flush=True)
     with archive.open(member) as source, target.open("wb") as sink:
         shutil.copyfileobj(source, sink, 8 * 1024 * 1024)
-    print("done", target.stat().st_size)
+    print("done", target.stat().st_size, flush=True)
 
 
 def image_bytes_of(dmg):
@@ -144,7 +146,7 @@ def main():
     args.work.mkdir(parents=True, exist_ok=True)
 
     remote = HttpFile(args.url)
-    print("remote zip", remote.size, "bytes")
+    print("remote zip", remote.size, "bytes", flush=True)
     archive = zipfile.ZipFile(remote)
     build_manifest = plistlib.loads(archive.read("BuildManifest.plist"))
     members = pick_members(build_manifest)
@@ -155,12 +157,14 @@ def main():
         if not dmg.is_file():
             extract_member(archive, member, dmg)
         sizes[label] = image_bytes_of(dmg)
-        print(label, "image bytes", sizes[label])
+        print(label, "image bytes", sizes[label], flush=True)
 
     tables = {label: args.policies / label.lower() / "hashes.bin" for label, _ in members}
+    table_digest = {}
     for label, table in tables.items():
         if not table.is_file():
             raise SystemExit("missing " + str(table))
+        table_digest[label] = hashlib.sha256(table.read_bytes()).hexdigest()
 
     os_size = sizes["OS"]
     sys_size = sizes["SystemOS"]
@@ -170,67 +174,71 @@ def main():
     sys_hash_offset = os_hash_offset + tables["OS"].stat().st_size
     total = sys_hash_offset + tables["SystemOS"].stat().st_size
     total = (total + 4095) // 4096 * 4096
-    print("offsets", os_offset, sys_offset, os_hash_offset, sys_hash_offset, "total", total)
+    print("offsets", os_offset, sys_offset, os_hash_offset, sys_hash_offset, "total", total, flush=True)
 
     part0 = args.out / "userdata-part0.img"
     part1 = args.out / "userdata-part1.img"
+    digests = {}
 
     with part0.open("wb") as sink:
         sink.truncate(os_offset + os_size)
         dmg = args.work / "OS.dmg"
         device = attach(dmg)
         try:
-            digest = stream_window(device, os_size, sink, os_offset)
+            digests["OS"] = stream_window(device, os_size, sink, os_offset)
         finally:
             detach(device)
-        print("OS sha256", digest)
-        recorded = json.loads((args.policies / "os" / "manifest.json").read_text())["image_sha256"]
-        print("policy sha256", recorded, "match", recorded == digest)
-        if recorded != digest:
-            raise SystemExit("OS bytes differ from the signed policy")
-        block = bytearray(4096)
-        block[0:8] = b"SHNGROOT"
-        entries = [
-            manifest_entry("OS", os_offset, os_size, 512, 1, digest),
-            manifest_entry("SystemOS", sys_offset, sys_size, 512, 1, "00" * 32),
-            manifest_entry("OS.hashes", os_hash_offset, tables["OS"].stat().st_size, 4096, 3, hashlib.sha256(tables["OS"].read_bytes()).hexdigest()),
-            manifest_entry("SystemOS.hashes", sys_hash_offset, tables["SystemOS"].stat().st_size, 4096, 3, hashlib.sha256(tables["SystemOS"].read_bytes()).hexdigest()),
-        ]
-        block[0:8] = b"SHNGROOT"
-        struct.pack_into("<IIQ", block, 8, 2, len(entries), total)
-        for index, blob in enumerate(entries):
-            block[24 + 128 * index:24 + 128 * (index + 1)] = blob
-        block[4064:4096] = hashlib.sha256(bytes(block[0:4064])).digest()
-        sink.seek(0)
-        sink.write(bytes(block))
     dmg.unlink()
-    print("part0", part0.stat().st_size)
+    print("OS sha256", digests["OS"], flush=True)
+    recorded = json.loads((args.policies / "os" / "manifest.json").read_text())["image_sha256"]
+    print("policy sha256", recorded, "match", recorded == digests["OS"], flush=True)
+    if recorded != digests["OS"]:
+        raise SystemExit("OS bytes differ from the signed policy")
+    print("part0", part0.stat().st_size, flush=True)
 
     with part1.open("wb") as sink:
         sink.truncate(total - sys_offset)
         dmg = args.work / "SystemOS.dmg"
         device = attach(dmg)
         try:
-            digest = stream_window(device, sys_size, sink, 0)
+            digests["SystemOS"] = stream_window(device, sys_size, sink, 0)
         finally:
             detach(device)
-        print("SystemOS sha256", digest)
-        recorded = json.loads((args.policies / "systemos" / "manifest.json").read_text())["image_sha256"]
-        print("policy sha256", recorded, "match", recorded == digest)
-        if recorded != digest:
-            raise SystemExit("SystemOS bytes differ from the signed policy")
         sink.seek(os_hash_offset - sys_offset)
         sink.write(tables["OS"].read_bytes())
         sink.seek(sys_hash_offset - sys_offset)
         sink.write(tables["SystemOS"].read_bytes())
     dmg.unlink()
-    print("part1", part1.stat().st_size)
+    print("SystemOS sha256", digests["SystemOS"], flush=True)
+    recorded = json.loads((args.policies / "systemos" / "manifest.json").read_text())["image_sha256"]
+    print("policy sha256", recorded, "match", recorded == digests["SystemOS"], flush=True)
+    if recorded != digests["SystemOS"]:
+        raise SystemExit("SystemOS bytes differ from the signed policy")
+    print("part1", part1.stat().st_size, flush=True)
+
+    entries = [
+        manifest_entry("OS", os_offset, os_size, 512, 1, digests["OS"]),
+        manifest_entry("SystemOS", sys_offset, sys_size, 512, 1, digests["SystemOS"]),
+        manifest_entry("OS.hashes", os_hash_offset, tables["OS"].stat().st_size, 4096, 3, table_digest["OS"]),
+        manifest_entry("SystemOS.hashes", sys_hash_offset, tables["SystemOS"].stat().st_size, 4096, 3, table_digest["SystemOS"]),
+    ]
+    block = bytearray(4096)
+    block[0:8] = b"SHNGROOT"
+    struct.pack_into("<IIQ", block, 8, 2, len(entries), total)
+    for index, blob in enumerate(entries):
+        block[24 + 128 * index:24 + 128 * (index + 1)] = blob
+    block[4064:4096] = hashlib.sha256(bytes(block[0:4064])).digest()
+    with part0.open("r+b") as handle:
+        handle.seek(0)
+        handle.write(bytes(block))
+    print("manifest written into part0", flush=True)
 
     report = {"total_bytes": total, "os_offset": os_offset, "systemos_offset": sys_offset,
               "os_hashes_offset": os_hash_offset, "systemos_hashes_offset": sys_hash_offset,
-              "os_size": os_size, "systemos_size": sys_size}
+              "os_size": os_size, "systemos_size": sys_size, "digests": digests,
+              "table_bytes": {k: tables[k].stat().st_size for k in tables}}
     (args.out / "userdata-root.json").write_text(json.dumps(report, indent=2) + chr(10))
-    print("done", total)
+    print("done", total, flush=True)
 
 
 if __name__ == "__main__":
