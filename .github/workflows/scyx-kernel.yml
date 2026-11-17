@@ -71,6 +71,27 @@ jobs:
           path: /home/runner/xnu-linux
           key: xnu-linux-toolchain-v1
 
+      - name: Install the toolchain shims
+        run: |
+          set -eux
+          P="$UNIXNU_TOOLCHAIN"
+          BIN="$GITHUB_WORKSPACE/llvm-bin"
+          mkdir -p "$BIN"
+          for t in xcrun plutil codesign; do
+            for cand in "$P/bin/$t" "$P/CommandLineTools/usr/bin/$t"; do
+              if [ -x "$cand" ]; then sudo ln -sf "$cand" "/usr/bin/$t"; echo "linked $t -> $cand"; break; fi
+            done
+          done
+          for t in llvm-ar llvm-nm llvm-objcopy llvm-ranlib llvm-strip llvm-readelf ld.lld; do
+            for cand in "$P/llvm/bin/$t" "$P/CommandLineTools/usr/bin/$t" "$P/bin/$t" /usr/bin/$t /usr/bin/$t-*; do
+              if [ -x "$cand" ]; then ln -sf "$cand" "$BIN/$t"; sudo ln -sf "$cand" "/usr/bin/$t"; break; fi
+            done
+          done
+          printf '#!/bin/sh\ncase "$1" in\n  --bindir) echo "%s" ;;\n  --version) echo "24.0.0" ;;\n  *) echo unsupported ;;\nesac\n' "$BIN" | sudo tee /usr/bin/llvm-config >/dev/null
+          sudo chmod +x /usr/bin/llvm-config
+          sudo ln -sf "$P/bin/lzfse" /usr/bin/lzfse 2>/dev/null || true
+          ls -l /usr/bin/xcrun /usr/bin/llvm-config || true
+          /usr/bin/xcrun --version || true
       - name: Build the kernel
         working-directory: scyx
         run: |
