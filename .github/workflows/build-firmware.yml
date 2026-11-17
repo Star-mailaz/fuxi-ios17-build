@@ -1,0 +1,178 @@
+name: build-firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_ref:
+        description: ljhhkx529/unixnu-fuxi ref
+        default: V2
+      unixnu_ref:
+        description: OddlyLabs/UniXNU ref
+        default: 6ae4c252937ae1920ab68eaded10fc78447e0194
+      uefi_ref:
+        description: OddlyLabs/uefi-fuxi ref
+        default: c5793bc2c60a2e2f5d9fbaad8717ed3f2736bfd2
+      xcode:
+        description: Xcode version on macos-26
+        default: "26.6"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DEVICE_REPO: ljhhkx529/unixnu-fuxi
+  UNIXNU_REPO: OddlyLabs/UniXNU
+  UEFI_REPO: OddlyLabs/uefi-fuxi
+  DEVICE_REF: ${{ inputs.device_ref || 'V2' }}
+  UNIXNU_REF: ${{ inputs.unixnu_ref || '6ae4c252937ae1920ab68eaded10fc78447e0194' }}
+  UEFI_REF: ${{ inputs.uefi_ref || 'c5793bc2c60a2e2f5d9fbaad8717ed3f2736bfd2' }}
+  XCODE: ${{ inputs.xcode || '26.6' }}
+  UNIXNU_UNIQUE_CHIP_ID: "535441524d41494c"
+  HOMEBREW_NO_AUTO_UPDATE: "1"
+  HOMEBREW_NO_INSTALL_CLEANUP: "1"
+  HOMEBREW_NO_ENV_HINTS: "1"
+
+jobs:
+  image:
+    runs-on: macos-26
+    timeout-minutes: 360
+    steps:
+      - name: Probe the runner
+        run: |
+          sw_vers
+          df -h /
+          ls -d /Applications/Xcode_*.app | xargs -n1 basename | tr "\n" " "; echo
+          sysctl -n hw.ncpu hw.memsize || true
+
+      - name: Checkout the device repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DEVICE_REPO }}
+          ref: ${{ env.DEVICE_REF }}
+          path: fuxi
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Checkout UniXNU
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UNIXNU_REPO }}
+          ref: ${{ env.UNIXNU_REF }}
+          path: unixnu
+          persist-credentials: false
+
+      - name: Checkout the firmware
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UEFI_REPO }}
+          ref: ${{ env.UEFI_REF }}
+          path: uefi-fuxi
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Select Xcode
+        run: |
+          dir="/Applications/Xcode_${XCODE}.app"
+          if [ ! -d "$dir" ]; then
+            dir=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n 1)
+            echo "::warning::Xcode ${XCODE} is not on this image; using ${dir:-none}."
+          fi
+          [ -n "$dir" ] && [ -d "$dir" ] || { echo "::error::no Xcode 26 on this image"; exit 1; }
+          echo "DEVELOPER_DIR=$dir/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$dir/Contents/Developer" xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Install host tools
+        run: |
+          brew install llvm lld mtools dtc openssl@3
+          if ! command -v unifdef >/dev/null; then
+            brew install unifdef
+            echo "$(brew --prefix unifdef)/bin" >> "$GITHUB_PATH"
+          fi
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          df -h /
+
+      - name: Select the device
+        working-directory: unixnu
+        run: ./unixnu defconfig fuxi_defconfig --device "$GITHUB_WORKSPACE/fuxi"
+
+      - name: Build kernel
+        working-directory: unixnu
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          ./unixnu build kernel --device "$GITHUB_WORKSPACE/fuxi" 2>&1 | tee "$RUNNER_TEMP/kernel.log"
+          df -h /
+
+      - name: Report the kernel
+        if: always()
+        run: |
+          set +e
+          find unixnu/out -name "kernel.macho" -o -name "*mach.development*" | head -20
+          for f in $(find unixnu/out -name "kernel.macho"); do ls -l "$f"; shasum -a 256 "$f"; done
+          df -h /
+
+      - name: Build payload
+        working-directory: unixnu
+        run: |
+          ./unixnu build payload --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" \
+            --unique-chip-id "$UNIXNU_UNIQUE_CHIP_ID" 2>&1 | tee "$RUNNER_TEMP/payload.log"
+
+      - name: Build firmware
+        working-directory: unixnu
+        run: |
+          ./unixnu build firmware --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" \
+            --target DEBUG 2>&1 | tee "$RUNNER_TEMP/firmware.log"
+          df -h /
+
+      - name: Pack the boot image
+        working-directory: unixnu
+        run: |
+          mkdir -p "$RUNNER_TEMP/image"
+          ./unixnu bootimg --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" --target DEBUG \
+            --dtb "$GITHUB_WORKSPACE/uefi-fuxi/Platforms/Xiaomi/fuxiPkg/FdtBlob/sm8550-xiaomi-fuxi.dtb" \
+            -o "$RUNNER_TEMP/image/boot.img"
+          cat "$RUNNER_TEMP/image/boot.json" 2>/dev/null || true
+          cd "$RUNNER_TEMP/image" && ls -l && shasum -a 256 boot.img
+
+      - name: Stage the artifacts
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$RUNNER_TEMP/image/boot.img" "$RUNNER_TEMP/out/"
+          cp "$RUNNER_TEMP/image/boot.json" "$RUNNER_TEMP/out/" 2>/dev/null || true
+          kernel=$(find "$GITHUB_WORKSPACE/unixnu/out" -path "*/kernel/kernel.macho" | head -n 1)
+          if [ -n "$kernel" ]; then gzip -9 -n -c "$kernel" > "$RUNNER_TEMP/out/kernel.macho.gz"; fi
+          report=$(find "$GITHUB_WORKSPACE/unixnu/out" -path "*/payload/payload.json" | head -n 1)
+          [ -n "$report" ] && cp "$report" "$RUNNER_TEMP/out/payload.json" || true
+          cd "$RUNNER_TEMP/out" && shasum -a 256 * > SHA256SUMS && ls -l
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fuxi-boot-image-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/out/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Collect the text logs
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/logs"
+          cp "$RUNNER_TEMP"/*.log "$RUNNER_TEMP/logs/" 2>/dev/null || true
+          find unixnu/out -path "*/logs/*.log" -size -20M -exec cp {} "$RUNNER_TEMP/logs/" \; 2>/dev/null || true
+          [ -f fuxi/unixnu.lock ] && cp fuxi/unixnu.lock "$RUNNER_TEMP/logs/" || true
+          ls -l "$RUNNER_TEMP/logs"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/logs/*
+          if-no-files-found: warn
+          retention-days: 14
