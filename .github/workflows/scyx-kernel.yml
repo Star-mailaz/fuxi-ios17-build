@@ -75,10 +75,13 @@ jobs:
         run: |
           set -eux
           P="$UNIXNU_TOOLCHAIN"
+          SHIMS=/opt/src/UniXNU/scripts/linux
           BIN="$GITHUB_WORKSPACE/llvm-bin"
           mkdir -p "$BIN"
+          ls "$P" || true
+          ls "$SHIMS" || true
           for t in xcrun plutil codesign; do
-            for cand in "$P/bin/$t" "$P/CommandLineTools/usr/bin/$t"; do
+            for cand in "$SHIMS/$t" "$P/bin/$t" "$P/CommandLineTools/usr/bin/$t"; do
               if [ -x "$cand" ]; then sudo ln -sf "$cand" "/usr/bin/$t"; echo "linked $t -> $cand"; break; fi
             done
           done
@@ -90,6 +93,7 @@ jobs:
           printf '#!/bin/sh\ncase "$1" in\n  --bindir) echo "%s" ;;\n  --version) echo "24.0.0" ;;\n  *) echo unsupported ;;\nesac\n' "$BIN" | sudo tee /usr/bin/llvm-config >/dev/null
           sudo chmod +x /usr/bin/llvm-config
           sudo ln -sf "$P/bin/lzfse" /usr/bin/lzfse 2>/dev/null || true
+          for t in install gm4; do [ -x "$SHIMS/$t" ] && sudo ln -sf "$SHIMS/$t" "/usr/bin/$t"; done
           ls -l /usr/bin/xcrun /usr/bin/llvm-config || true
           /usr/bin/xcrun --version || true
       - name: Build the kernel
