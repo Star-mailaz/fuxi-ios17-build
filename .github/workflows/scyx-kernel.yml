@@ -1,0 +1,100 @@
+name: scyx-kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      ram:
+        description: memory profile (full or 9g)
+        default: 9g
+      jobs:
+        description: parallel jobs
+        default: "4"
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  FUXI_BUILD_ROOT: /home/runner/fuxi-build
+  UNIXNU_TOOLCHAIN: /home/runner/xnu-linux
+  UNIXNU_SRC: /opt/src/UniXNU
+  OUT_ROOT: ${{ github.workspace }}/out
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Probe the runner
+        run: |
+          uname -a; nproc; free -g | head -2; df -h / /home
+
+      - name: Clone the project
+        run: |
+          set -eux
+          git clone --quiet https://github.com/scyx2611/fuxi-ios.git "$GITHUB_WORKSPACE/scyx"
+          git -C "$GITHUB_WORKSPACE/scyx" log --oneline -3
+          du -sh "$GITHUB_WORKSPACE/scyx"
+          test -f "$GITHUB_WORKSPACE/scyx/.github/workflows/kernel-adsp-battery.yml"
+          test -f "$GITHUB_WORKSPACE/scyx/work/localbuild/fuxi-kernel-build.sh"
+
+      - name: Clone UniXNU (toolchain sources and shims)
+        run: |
+          set -eux
+          sudo mkdir -p /opt/src
+          sudo chown -R "$USER" /opt/src
+          git clone --quiet --depth 1 --branch fuxi https://github.com/SadNutWall/UniXNU /opt/src/UniXNU
+          ls /opt/src/UniXNU/scripts/linux | head -20
+
+      - name: Restore the Linux XNU toolchain
+        id: tc
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/xnu-linux
+          key: xnu-linux-toolchain-v1
+
+      - name: Build the Linux XNU toolchain
+        if: steps.tc.outputs.cache-hit != 'true'
+        run: |
+          set -eux
+          if [ -x "$UNIXNU_TOOLCHAIN/llvm/bin/clang" ]; then echo "already present"; exit 0; fi
+          sudo python3 /opt/src/UniXNU/scripts/linux/setup-toolchain.py "$UNIXNU_TOOLCHAIN" 2>&1 | tail -40
+          ls "$UNIXNU_TOOLCHAIN"
+
+      - name: Save the Linux XNU toolchain
+        if: steps.tc.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/xnu-linux
+          key: xnu-linux-toolchain-v1
+
+      - name: Build the kernel
+        working-directory: scyx
+        run: |
+          set -uo pipefail
+          bash work/localbuild/fuxi-kernel-build.sh --ram "${{ inputs.ram }}" \
+            --harness "$GITHUB_WORKSPACE/scyx" --jobs "${{ inputs.jobs }}" 2>&1 | tee "$GITHUB_WORKSPACE/build.log"
+          rc=${PIPESTATUS[0]}
+          echo "build rc=$rc"
+          exit $rc
+
+      - name: Report the outputs
+        if: always()
+        run: |
+          set +e
+          ls -lR "$OUT_ROOT" | head -60
+          find "$OUT_ROOT" -name "*.fuxi*" -o -name "*.adt" | head -20
+          df -h /
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kernel-fuxi-${{ github.run_attempt }}
+          path: |
+            out/**
+            build.log
+          if-no-files-found: warn
+          retention-days: 14
