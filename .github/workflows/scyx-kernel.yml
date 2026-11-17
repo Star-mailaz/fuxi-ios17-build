@@ -71,6 +71,13 @@ jobs:
           path: /home/runner/xnu-linux
           key: xnu-linux-toolchain-v1
 
+      - name: System packages
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libbsd-dev uuid-dev zlib1g-dev libssl-dev libbz2-dev liblzma-dev \
+            pkg-config libblocksruntime-dev device-tree-compiler unzip p7zip-full tcsh unifdef flex bison \
+            autoconf automake libtool git patch rsync cpio wget curl python3 ca-certificates
       - name: Install the toolchain shims
         run: |
           set -eux
