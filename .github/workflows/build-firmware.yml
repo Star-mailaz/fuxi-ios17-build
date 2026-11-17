@@ -5,7 +5,7 @@ on:
     inputs:
       device_ref:
         description: ljhhkx529/unixnu-fuxi ref
-        default: V2
+        default: 451ef8004ba95f55cabfc35306c8a8a6f7ebabb8
       unixnu_ref:
         description: OddlyLabs/UniXNU ref
         default: 6ae4c252937ae1920ab68eaded10fc78447e0194
@@ -27,7 +27,7 @@ env:
   DEVICE_REPO: ljhhkx529/unixnu-fuxi
   UNIXNU_REPO: OddlyLabs/UniXNU
   UEFI_REPO: OddlyLabs/uefi-fuxi
-  DEVICE_REF: ${{ inputs.device_ref || 'V2' }}
+  DEVICE_REF: ${{ inputs.device_ref || '451ef8004ba95f55cabfc35306c8a8a6f7ebabb8' }}
   UNIXNU_REF: ${{ inputs.unixnu_ref || '6ae4c252937ae1920ab68eaded10fc78447e0194' }}
   UEFI_REF: ${{ inputs.uefi_ref || 'c5793bc2c60a2e2f5d9fbaad8717ed3f2736bfd2' }}
   XCODE: ${{ inputs.xcode || '26.6' }}
@@ -57,6 +57,18 @@ jobs:
           submodules: recursive
           persist-credentials: false
 
+      - name: Pin the USB debug module
+        run: |
+          m="$GITHUB_WORKSPACE/fuxi/drivers/QcomXnuUsbDebug"
+          want=fba19d40f2a87c5805804d80c81bc3edadf88a8f
+          have=$(git -C "$m" rev-parse HEAD)
+          echo "QcomXnuUsbDebug at $have (script pins $want)"
+          if [ "$have" != "$want" ]; then
+            git -C "$m" fetch -q --depth 1 origin "$want"
+            git -C "$m" checkout -q --detach "$want"
+            echo "repinned to $(git -C "$m" rev-parse HEAD)"
+          fi
+          git -C "$m" rev-parse HEAD
       - name: Checkout UniXNU
         uses: actions/checkout@v4
         with:
@@ -123,7 +135,7 @@ jobs:
         working-directory: unixnu
         run: |
           ./unixnu build payload --device "$GITHUB_WORKSPACE/fuxi" --uefi "$GITHUB_WORKSPACE/uefi-fuxi" \
-            --unique-chip-id "$UNIXNU_UNIQUE_CHIP_ID" 2>&1 | tee "$RUNNER_TEMP/payload.log"
+            --unique-chip-id "$UNIXNU_UNIQUE_CHIP_ID" --init-data 2>&1 | tee "$RUNNER_TEMP/payload.log"
 
       - name: Build firmware
         working-directory: unixnu
