@@ -1,0 +1,90 @@
+name: scyx-bootimg
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_run:
+        description: scyx-kernel run id that holds the artifact
+        default: "44190113829"
+      artifact:
+        description: kernel artifact name
+        default: kernel-fuxi-1
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Clone the project
+        run: |
+          set -eux
+          git clone --quiet https://github.com/scyx2611/fuxi-ios.git "$GITHUB_WORKSPACE/scyx"
+
+      - name: Fetch the kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ github.workspace }}/kernel
+          run-id: ${{ inputs.kernel_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: List the kernel artifact
+        run: |
+          set +e
+          find "$GITHUB_WORKSPACE/kernel" -type f | head -40
+          find "$GITHUB_WORKSPACE/kernel" -name "*.fuxi*" -o -name "*.adt" | head -20
+
+      - name: Firmware blobs
+        run: |
+          set -eux
+          mkdir -p "$GITHUB_WORKSPACE/fw"
+          base=https://raw.githubusercontent.com/ianchb/sheng-firmware/master
+          curl -fsSL "$base/qcom/gmu_gen70200.bin" -o "$GITHUB_WORKSPACE/fw/gmu_gen70200.bin"
+          curl -fsSL "$base/qcom/a740_sqe.fw" -o "$GITHUB_WORKSPACE/fw/a740_sqe.fw"
+          curl -fsSL "$base/qcom/sm8550/sheng/a740_zap.mbn" -o "$GITHUB_WORKSPACE/fw/a740_zap.mbn"
+          sha256sum "$GITHUB_WORKSPACE"/fw/*
+
+      - name: Build the payload and the boot image
+        run: |
+          set -eux
+          K=$(find "$GITHUB_WORKSPACE/kernel" -name "kernel.development.fuxi" | head -1)
+          A=$(find "$GITHUB_WORKSPACE/kernel" -name "*.adt" | head -1)
+          echo "kernel=$K"; echo "adt=$A"
+          test -n "$K"; test -n "$A"
+          python3 ios-fuxi/tools/mkpayload.py "$K" "$A" "$GITHUB_WORKSPACE/payload" \
+            --cmdline "debug=0xc serial=3 keepsyms=1"
+          ls -l "$GITHUB_WORKSPACE/payload"
+          MK="$GITHUB_WORKSPACE/scyx/ios-fuxi/uefi-fuxi/Resources/Scripts/mkbootimg.py"
+          [ -f "$MK" ] || MK=$(find "$GITHUB_WORKSPACE/scyx" -name mkbootimg.py | head -1)
+          echo "mkbootimg=$MK"
+          cd ios-fuxi/shim/fuxi-loader
+          CLANG=clang LLD=ld.lld OBJCOPY=llvm-objcopy READELF=llvm-readelf MKBOOTIMG="$MK" \
+            FUXI_GMU_FIRMWARE="$GITHUB_WORKSPACE/fw/gmu_gen70200.bin" \
+            FUXI_SQE_FIRMWARE="$GITHUB_WORKSPACE/fw/a740_sqe.fw" \
+            FUXI_GPU_ZAP_MBN="$GITHUB_WORKSPACE/fw/a740_zap.mbn" \
+            bash build.sh "$GITHUB_WORKSPACE/payload" 2>&1 | tail -40
+
+      - name: Collect
+        if: always()
+        run: |
+          set +e
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp ios-fuxi/shim/out/fuxi-loader/* "$GITHUB_WORKSPACE/out/" 2>/dev/null
+          cp "$GITHUB_WORKSPACE/payload" "$GITHUB_WORKSPACE/out/" 2>/dev/null
+          ls -lR "$GITHUB_WORKSPACE/out"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bootimg-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/out/*
+          if-no-files-found: warn
+          retention-days: 14
