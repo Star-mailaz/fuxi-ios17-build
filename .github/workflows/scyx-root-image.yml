@@ -8,7 +8,7 @@ on:
         default: 16G
 
 permissions:
-  contents: read
+  contents: write
 
 defaults:
   run:
@@ -22,7 +22,6 @@ jobs:
       - name: Disk
         run: |
           df -h /; nproc; free -g | head -2
-
       - name: Check out the project
         uses: actions/checkout@v4
         with:
@@ -34,41 +33,31 @@ jobs:
         with:
           path: ci-self
           persist-credentials: false
-
       - name: Host packages
         run: |
           set -eux
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libfsapfs-dev libfuse3-dev cmake gcc g++ make pkg-config \
+          sudo apt-get install -y -qq libfuse3-dev cmake gcc g++ make pkg-config \
             zlib1g-dev libbz2-dev libssl-dev hfsprogs fuse3 rsync zstd unzip curl python3
-
       - name: Build apfs-fuse
         run: |
           set -eux
           sudo git clone --depth 1 --recursive https://github.com/sgan81/apfs-fuse.git /opt/apfs-fuse
-          sudo git -C /opt/apfs-fuse submodule update --init --recursive --depth 1
           sudo cmake -S /opt/apfs-fuse -B /opt/apfs-fuse/build -DCMAKE_BUILD_TYPE=Release
           sudo cmake --build /opt/apfs-fuse/build -j4
-          sudo find /opt/apfs-fuse/build -name apfs-fuse -type f -executable
           sudo ln -sf "$(sudo find /opt/apfs-fuse/build -name apfs-fuse -type f | head -1)" /usr/local/bin/apfs-fuse
-          apfs-fuse --help | head -5 || true
-
       - name: Download the IPSW
         run: |
           set -eux
           curl -sSL --retry 3 -o ipsw.zip \
             "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
-          ls -l ipsw.zip
           mkdir -p ipsw && unzip -o -q ipsw.zip -d ipsw "*.dmg" "BuildManifest.plist" "Restore.plist"
-          rm -f ipsw.zip
-          ls -l ipsw
-          df -h /
-
+          rm -f ipsw.zip; ls -lS ipsw | head -12
       - name: Map the dmgs
         run: |
           set -eux
-          python3 ci-self/ci/root-roles.py ipsw/BuildManifest.plist | tee roles.txt
-          ls -S ipsw/*.dmg
+          python3 ci-self/ci/root-roles.py ipsw/BuildManifest.plist > roles.txt || true
+          cat roles.txt
       - name: Build the HFS+ root image
         run: |
           set -eux
@@ -76,42 +65,43 @@ jobs:
           OS=$(pick "$(grep '^OS=' roles.txt | cut -d= -f2- || true)")
           SYS=$(pick "$(grep '^SystemOS=' roles.txt | cut -d= -f2- || true)")
           APP=$(pick "$(grep '^AppOS=' roles.txt | cut -d= -f2- || true)")
-          grep -E '^(OS|SystemOS|AppOS|SystemVolume|AppVolume)=' roles.txt
-          if [ -z "$OS" ] || [ -z "$SYS" ] || [ -z "$APP" ]; then
-            SYS=$(basename "$(ls -S ipsw/*.dmg | head -1)")
-            OS=$(basename "$(ls -S ipsw/*.dmg | head -2 | tail -1)")
-            APP=$(basename "$(ls -S ipsw/*.dmg | head -3 | tail -1)")
+          echo "manifest: OS=$OS SYS=$SYS APP=$APP"
+          mapfile -t BY < <(ls -S ipsw/*.dmg | sed 's|^ipsw/||')
+          printf 'by size: %s\n' "${BY[*]}"
+          # Fill only what the manifest did not resolve; never overwrite the OS role
+          # (the previous run replaced a correct 4.7 GB OS with a 2.7 GB dmg).
+          for c in "${BY[@]}"; do
+            [ -n "$OS" ] && [ -n "$SYS" ] && [ -n "$APP" ] && break
+            if [ "$c" = "$OS" ] || [ "$c" = "$SYS" ] || [ "$c" = "$APP" ]; then continue; fi
+            if [ -z "$SYS" ]; then SYS=$c; elif [ -z "$APP" ]; then APP=$c; fi
+          done
+          # App cryptex is the small one: prefer the smallest unresolved dmg.
+          if [ -z "$APP" ] || [ "$(stat -c%s "ipsw/$APP")" -gt 400000000 ]; then
+            for c in $(ls -S -r ipsw/*.dmg | sed 's|^ipsw/||'); do
+              [ "$c" = "$OS" ] && continue; [ "$c" = "$SYS" ] && continue; APP=$c; break
+            done
           fi
-          echo "OS=$OS SYS=$SYS APP=$APP"
+          echo "picked: OS=$OS SYS=$SYS APP=$APP"
           ls -l "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP"
-          sudo bash harness/ios-fuxi/tools/mkiosroot.sh "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP" "$PWD/iOSRoot.img" "${{ inputs.size }}" 2>&1 | tail -60
-          ls -lh iOSRoot.img
-          sha256sum iOSRoot.img
-          df -h /
-
-      - name: Compress and checksum
+          sudo bash harness/ios-fuxi/tools/mkiosroot.sh "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP" "$PWD/iOSRoot.img" "${{ inputs.size }}" 2>&1 | tail -40
+          ls -lh iOSRoot.img; sha256sum iOSRoot.img
+      - name: Compress and split
         run: |
           set -eux
-          zstd -T0 -19 --long=27 -o iOSRoot.img.zst iOSRoot.img
-          ls -lh iOSRoot.img iOSRoot.img.zst
-          sha256sum iOSRoot.img iOSRoot.img.zst > SHA256SUMS
-          cat SHA256SUMS
-          rm -f iOSRoot.img
-
-      - name: Collect
-        if: always()
+          gzip -1 -c iOSRoot.img > iOSRoot.img.gz
+          ls -lh iOSRoot.img.gz
+          mkdir -p out
+          split -b 1700M -d iOSRoot.img.gz "out/iosroot-part-"
+          sha256sum iOSRoot.img iOSRoot.img.gz out/* > out/SHA256SUMS
+          ls -l out
+          rm -f iOSRoot.img iOSRoot.img.gz
+      - name: Publish to a release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          set +e
-          mkdir -p "$GITHUB_WORKSPACE/out"
-          cp iOSRoot.img.zst SHA256SUMS "$GITHUB_WORKSPACE/out/" 2>/dev/null
-          cp roles.txt "$GITHUB_WORKSPACE/out/" 2>/dev/null
-          ls -l "$GITHUB_WORKSPACE/out"
-          df -h /
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: iosroot-${{ github.run_attempt }}
-          path: ${{ github.workspace }}/out/*
-          if-no-files-found: warn
-          retention-days: 7
+          set -eux
+          tag=iosroot-${{ github.run_attempt }}
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          gh release create "$tag" --title "$tag" --notes "fuxi iOS 16 root image (split)" || true
+          for f in out/*; do gh release upload "$tag" "$f" --clobber; done
+          gh release view "$tag" --json assets --jq '.assets[] | "\(.name) \(.size)"'
