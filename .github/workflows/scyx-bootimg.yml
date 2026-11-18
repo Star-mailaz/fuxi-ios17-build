@@ -60,8 +60,13 @@ jobs:
           A=$(find "$GITHUB_WORKSPACE/kernel" -name "*.adt" | head -1)
           echo "kernel=$K"; echo "adt=$A"
           test -n "$K"; test -n "$A"
-          python3 ios-fuxi/tools/mkpayload.py "$K" "$A" "$GITHUB_WORKSPACE/payload" \
-            --cmdline "debug=0xc serial=3 keepsyms=1"
+          C=$(find "$GITHUB_WORKSPACE/kernel" -name cmdline.txt | head -1)
+          echo "cmdline=$C"
+          if [ -n "$C" ]; then
+            python3 ios-fuxi/tools/mkpayload.py "$K" "$A" "$GITHUB_WORKSPACE/payload" --cmdline "$(cat "$C")"
+          else
+            python3 ios-fuxi/tools/mkpayload.py "$K" "$A" "$GITHUB_WORKSPACE/payload" --cmdline "debug=0xc serial=3 keepsyms=1"
+          fi
           ls -l "$GITHUB_WORKSPACE/payload"
           MK="$GITHUB_WORKSPACE/scyx/ios-fuxi/uefi-fuxi/Resources/Scripts/mkbootimg.py"
           [ -f "$MK" ] || MK=$(find "$GITHUB_WORKSPACE/scyx" -name mkbootimg.py | head -1)
