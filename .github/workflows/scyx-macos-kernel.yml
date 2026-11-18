@@ -1,0 +1,83 @@
+name: scyx-macos-kernel
+
+on:
+  workflow_dispatch:
+    inputs:
+      ram:
+        description: RAM layout (full or 9g)
+        default: 9g
+      variant:
+        description: build.sh target
+        default: kernel-metal4
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  kernel:
+    runs-on: macos-15-intel
+    timeout-minutes: 300
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+      FUXI_IIG_MODE: replay
+      FUXI_RAM_LAYOUT: ${{ inputs.ram }}
+    steps:
+      - name: Probe the runner
+        run: |
+          sw_vers; df -h /; ls -d /Applications/Xcode_*.app | xargs -n1 basename | tr "\n" " "; echo
+
+      - name: Check out the project as the harness
+        uses: actions/checkout@v4
+        with:
+          repository: scyx2611/fuxi-ios
+          path: harness
+          persist-credentials: false
+
+      - name: Fetch the pinned kernel source and apply the patches
+        run: |
+          set -euo pipefail
+          git init source
+          git -C source remote add origin https://github.com/zgl97/ios-fuxi.git
+          git -C source fetch --no-tags --depth=1 origin 979e2f08c704677bb75934ae96d4686ba9d1692b
+          git -C source checkout --detach FETCH_HEAD
+          test "$(git -C source rev-parse HEAD)" = 979e2f08c704677bb75934ae96d4686ba9d1692b
+          grep -E "^ +git -C source apply \.\./harness/patches/" harness/.github/workflows/kernel-adsp-battery.yml \
+            | grep -v -- "--check" | sed "s/^ *//" > apply.sh
+          wc -l apply.sh; cat apply.sh
+          bash -e apply.sh
+
+      - name: Build the kernel
+        run: |
+          set -euo pipefail
+          cd source
+          xcodebuild -version
+          if bash tools/ci/build.sh "${{ inputs.variant }}" > console.log 2>&1; then
+            echo "kernel build ok"
+          else
+            tail -n 150 console.log
+            exit 1
+          fi
+          tail -n 20 console.log
+          ls -l tools/out/ci/kernel-metal4 || true
+
+      - name: Collect
+        if: always()
+        run: |
+          set +e
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp -R source/tools/out/ci/kernel-metal4/* "$GITHUB_WORKSPACE/out/" 2>/dev/null
+          cp source/console.log "$GITHUB_WORKSPACE/out/" 2>/dev/null
+          find "$GITHUB_WORKSPACE/out" -maxdepth 2 | head -40
+          df -h /
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-kernel-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/out/**
+          if-no-files-found: warn
+          retention-days: 14
