@@ -92,7 +92,12 @@ jobs:
           # for a PC monitor vendor request and reboots at the 90 s deadline: measured on
           # device as 87 s of black screen, then HyperOS. With the delay defined it does
           # what fuxi-xnu-monitor.py does (CPU_ON cpu@100, move USB there, launch XNU).
-          sed -i 's/-DFUXI_XNU_LOADER=1/-DFUXI_XNU_LOADER=1 -DFUXI_AUTO_LAUNCH_S=20/' ios-fuxi/shim/fuxi-loader/build.sh
+          # 12 GB fuxi: the author's own loader recipes build with
+          # '-DFUXI=1 -DFUXI_XNU_LOADER=1 -DFUXI_RAM_9G=1'. Without the RAM profile the
+          # loader keeps FG_RAM_SIZE=0x13e000000, rejects the 9g payload (0x23e000000)
+          # and paints "ERROR unsafe Fuxi memory layout" on the panel.
+          sed -i 's/-DFUXI_XNU_LOADER=1/-DFUXI_XNU_LOADER=1 -DFUXI_RAM_9G=1 -DFUXI_AUTO_LAUNCH_S=20/' ios-fuxi/shim/fuxi-loader/build.sh
+          grep -c 'FUXI_RAM_9G=1' ios-fuxi/shim/fuxi-loader/build.sh
           grep -c 'FUXI_AUTO_LAUNCH_S=20' ios-fuxi/shim/fuxi-loader/build.sh
           clang --version | head -1
           cd ios-fuxi/shim/fuxi-loader
