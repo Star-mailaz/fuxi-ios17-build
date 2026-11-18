@@ -107,9 +107,15 @@ jobs:
         run: |
           set +e
           mkdir -p "$GITHUB_WORKSPACE/out"
-          cp "$GITHUB_WORKSPACE"/scyx/ios-fuxi/shim/out/fuxi-loader/* "$GITHUB_WORKSPACE/out/" 2>/dev/null
-          cp "$GITHUB_WORKSPACE/payload" "$GITHUB_WORKSPACE/out/" 2>/dev/null
-          ls -lR "$GITHUB_WORKSPACE/out"
+          SRC="$GITHUB_WORKSPACE/scyx/ios-fuxi/shim/out/fuxi-loader"
+          cp "$SRC/fuxi-xnu-boot.img" "$GITHUB_WORKSPACE/out/fuxi-xnu-boot.img" 2>/dev/null
+          ls -lR "$SRC" | head -20
+          if [ -f "$GITHUB_WORKSPACE/out/fuxi-xnu-boot.img" ]; then
+            sha256sum "$GITHUB_WORKSPACE/out/fuxi-xnu-boot.img" | tee "$GITHUB_WORKSPACE/out/SHA256SUMS"
+            gzip -9 -c "$GITHUB_WORKSPACE/out/fuxi-xnu-boot.img" > "$GITHUB_WORKSPACE/out/fuxi-xnu-boot.img.gz"
+            rm -f "$GITHUB_WORKSPACE/out/fuxi-xnu-boot.img"
+          fi
+          ls -l "$GITHUB_WORKSPACE/out"
 
       - uses: actions/upload-artifact@v4
         if: always()
