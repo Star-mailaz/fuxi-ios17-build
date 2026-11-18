@@ -76,6 +76,7 @@ jobs:
           OS=$(pick "$(grep '^OS=' roles.txt | cut -d= -f2- || true)")
           SYS=$(pick "$(grep '^SystemOS=' roles.txt | cut -d= -f2- || true)")
           APP=$(pick "$(grep '^AppOS=' roles.txt | cut -d= -f2- || true)")
+          grep -E '^(OS|SystemOS|AppOS|SystemVolume|AppVolume)=' roles.txt
           if [ -z "$OS" ] || [ -z "$SYS" ] || [ -z "$APP" ]; then
             SYS=$(basename "$(ls -S ipsw/*.dmg | head -1)")
             OS=$(basename "$(ls -S ipsw/*.dmg | head -2 | tail -1)")
