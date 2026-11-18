@@ -77,6 +77,9 @@ jobs:
           # The pinned ZAP hash predates the current sheng blob; the project's own docs skip the zap.
           sed -i 's/^reserved = True/reserved = False/' ios-fuxi/shim/fuxi-loader/build.sh
           grep -n 'reserved = False' ios-fuxi/shim/fuxi-loader/build.sh
+          # Ubuntu's clang predates this warning flag; the loader build must not fail on it.
+          sed -i 's/ -Wno-error=unterminated-string-initialization//' ios-fuxi/shim/fuxi-loader/build.sh
+          clang --version | head -1
           cd ios-fuxi/shim/fuxi-loader
           CLANG=clang LLD=ld.lld OBJCOPY=llvm-objcopy READELF=llvm-readelf MKBOOTIMG="$MK" \
             FUXI_GMU_FIRMWARE="$GITHUB_WORKSPACE/fw/gmu_gen70200.bin" \
