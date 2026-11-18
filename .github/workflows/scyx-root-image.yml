@@ -40,7 +40,8 @@ jobs:
       - name: Build apfs-fuse
         run: |
           set -eux
-          sudo git clone --depth 1 https://github.com/sgan81/apfs-fuse.git /opt/apfs-fuse
+          sudo git clone --depth 1 --recursive https://github.com/sgan81/apfs-fuse.git /opt/apfs-fuse
+          sudo git -C /opt/apfs-fuse submodule update --init --recursive --depth 1
           sudo cmake -S /opt/apfs-fuse -B /opt/apfs-fuse/build -DCMAKE_BUILD_TYPE=Release
           sudo cmake --build /opt/apfs-fuse/build -j4
           sudo find /opt/apfs-fuse/build -name apfs-fuse -type f -executable
