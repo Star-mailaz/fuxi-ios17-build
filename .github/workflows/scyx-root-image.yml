@@ -29,6 +29,11 @@ jobs:
           repository: scyx2611/fuxi-ios
           path: harness
           persist-credentials: false
+      - name: Check out these helpers
+        uses: actions/checkout@v4
+        with:
+          path: ci-self
+          persist-credentials: false
 
       - name: Host packages
         run: |
@@ -62,7 +67,7 @@ jobs:
       - name: Map the dmgs
         run: |
           set -eux
-          python3 -c "import plistlib;bm=plistlib.load(open('ipsw/BuildManifest.plist','rb'));r={};[r.setdefault(k,b[m]['Info']['Path']) for b in bm['BuildIdentities'] for m in [b.get('Manifest',{})] for k in ('OS','SystemOS','AppOS') if k in m and 'Info' in m[k]];print('\n'.join(k+'='+str(v) for k,v in r.items()))" | tee roles.txt
+          python3 ci-self/ci/root-roles.py ipsw/BuildManifest.plist | tee roles.txt
           ls -S ipsw/*.dmg
       - name: Build the HFS+ root image
         run: |
