@@ -100,8 +100,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eux
+          # The checkout lives in a subdirectory, so $GITHUB_WORKSPACE is not a git
+          # repository: every gh call must name the repository explicitly.
           tag=iosroot-${{ github.run_attempt }}
           echo "TAG=$tag" >> "$GITHUB_ENV"
-          gh release create "$tag" --title "$tag" --notes "fuxi iOS 16 root image (split)" || true
-          for f in out/*; do gh release upload "$tag" "$f" --clobber; done
-          gh release view "$tag" --json assets --jq '.assets[] | "\(.name) \(.size)"'
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" \
+            --notes "fuxi iOS 16 root image (split)" || true
+          for f in out/*; do gh release upload "$tag" "$f" --repo "$GITHUB_REPOSITORY" --clobber; done
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name) \(.size)"'
