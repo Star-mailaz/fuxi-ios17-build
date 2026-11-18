@@ -67,6 +67,12 @@ jobs:
           echo "kernel=$K"; echo "adt=$A"
           test -n "$K"; test -n "$A"
           C=$(find "$GITHUB_WORKSPACE/kernel" -name cmdline.txt | head -1)
+          # Put the kernel console on the panel so a failure is readable without the USB monitor.
+          if [ -n "$C" ]; then
+            sed -i 's/sweetfb_noconsole=1/sweetfb_noconsole=0/' "$C"
+            sed -i 's/^debug=0xc /-v debug=0x14e /' "$C"
+            echo "console cmdline: $(cat "$C")"
+          fi
           echo "cmdline=$C"
           if [ -n "$C" ]; then
             python3 ios-fuxi/tools/mkpayload.py "$K" "$A" "$GITHUB_WORKSPACE/payload" --cmdline "$(cat "$C")"
