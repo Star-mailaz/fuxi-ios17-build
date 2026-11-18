@@ -1,0 +1,120 @@
+name: scyx-adtboot
+
+on:
+  workflow_dispatch:
+    inputs:
+      extents:
+        description: JSON {"blocks":N,"extents":[[file,part,count],...]} in 4 KiB blocks
+        required: true
+      kernel_run:
+        description: scyx-kernel run id holding macos-kernel
+        default: "44255762998"
+      artifact:
+        default: macos-kernel-1
+
+permissions:
+  contents: read
+  actions: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Clone the project
+        run: |
+          set -eux
+          git clone --quiet https://github.com/scyx2611/fuxi-ios.git "$GITHUB_WORKSPACE/scyx"
+      - name: Fetch the kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: ${{ github.workspace }}/kernel
+          run-id: ${{ inputs.kernel_run }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Toolchain
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm
+      - name: Firmware blobs
+        run: |
+          set -eux
+          mkdir -p "$GITHUB_WORKSPACE/fw"
+          base=https://raw.githubusercontent.com/ianchb/sheng-firmware/master
+          curl -fsSL "$base/qcom/gmu_gen70200.bin" -o "$GITHUB_WORKSPACE/fw/gmu_gen70200.bin"
+          curl -fsSL "$base/qcom/a740_sqe.fw" -o "$GITHUB_WORKSPACE/fw/a740_sqe.fw"
+          curl -fsSL "$base/qcom/sm8550/sheng/a740_zap.mbn" -o "$GITHUB_WORKSPACE/fw/a740_zap.mbn"
+      - name: Inject the root extents into the ADT
+        env:
+          EXTENTS: ${{ inputs.extents }}
+        working-directory: scyx
+        run: |
+          set -eux
+          A=$(find "$GITHUB_WORKSPACE/kernel" -name "*.adt" | head -1)
+          K=$(find "$GITHUB_WORKSPACE/kernel" -name "kernel.development.fuxi" | head -1)
+          C=$(find "$GITHUB_WORKSPACE/kernel" -name cmdline.txt | head -1)
+          echo "adt=$A kernel=$K cmdline=$C"
+          python3 - "$A" <<'PY'
+          import json, os, struct, sys
+          sys.path.insert(0, 'ios-fuxi/tools')
+          import adt
+          src = sys.argv[1]
+          root, end = adt.parse(open(src, 'rb').read())
+          chosen = next(n for n in root.children if n.name == 'chosen')
+          data = json.loads(os.environ['EXTENTS'])
+          extents = data['extents']
+          blocks = int(data['blocks'])
+          raw = b''.join(struct.pack('<QQQ', int(a), int(b), int(c)) for a, b, c in extents)
+          if len(raw) > 3 * 8 * 512:
+              raise SystemExit('too many extents')
+          chosen.props = [p for p in chosen.props
+                          if p[0] not in ('fuxi-root-extents', 'fuxi-root-blocks')]
+          chosen.props.append(('fuxi-root-extents', 0, raw))
+          chosen.props.append(('fuxi-root-blocks', 0, struct.pack('<Q', blocks)))
+          out = adt.serialize(root)
+          if len(out) > 0x4000:
+              raise SystemExit(f'ADT {len(out)} exceeds the 16 KiB loader limit')
+          open('fuxi-ext.adt', 'wb').write(out)
+          total = sum(int(c) for _, _, c in extents)
+          print(f'extents={len(extents)} blocks={blocks} covered={total} adt={len(out)}')
+          if total != blocks:
+              raise SystemExit('extents do not cover the whole image')
+          PY
+          python3 ios-fuxi/tools/mkpayload.py "$K" fuxi-ext.adt "$GITHUB_WORKSPACE/payload" --cmdline "$(cat "$C")"
+          ls -l "$GITHUB_WORKSPACE/payload"
+      - name: Build the loader and the boot image
+        working-directory: scyx
+        run: |
+          set -eux
+          MK="$GITHUB_WORKSPACE/scyx/ios-fuxi/uefi-fuxi/Resources/Scripts/mkbootimg.py"
+          [ -f "$MK" ] || MK=$(find "$GITHUB_WORKSPACE/scyx" -name mkbootimg.py | head -1)
+          sed -i 's/(0x40000000,0x13e000000)/(0x30000000,0x40000000,0x13e000000,0x23e000000)/' ios-fuxi/shim/fuxi-loader/build.sh
+          sed -i 's/^reserved = True/reserved = False/' ios-fuxi/shim/fuxi-loader/build.sh
+          sed -i 's/ -Wno-error=unterminated-string-initialization//' ios-fuxi/shim/fuxi-loader/build.sh
+          sed -i 's/-DFUXI_XNU_LOADER=1/-DFUXI_XNU_LOADER=1 -DFUXI_RAM_9G=1 -DFUXI_AUTO_LAUNCH_S=20/' ios-fuxi/shim/fuxi-loader/build.sh
+          grep -c 'FUXI_RAM_9G=1' ios-fuxi/shim/fuxi-loader/build.sh
+          cd ios-fuxi/shim/fuxi-loader
+          CLANG=clang LLD=ld.lld OBJCOPY=llvm-objcopy READELF=llvm-readelf MKBOOTIMG="$MK" \
+            FUXI_GMU_FIRMWARE="$GITHUB_WORKSPACE/fw/gmu_gen70200.bin" \
+            FUXI_SQE_FIRMWARE="$GITHUB_WORKSPACE/fw/a740_sqe.fw" \
+            FUXI_GPU_ZAP_MBN="$GITHUB_WORKSPACE/fw/a740_zap.mbn" \
+            bash build.sh "$GITHUB_WORKSPACE/payload" 2>&1 | tail -20
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p out
+          cp scyx/ios-fuxi/shim/out/fuxi-loader/fuxi-xnu-boot.img out/
+          sha256sum out/fuxi-xnu-boot.img | tee out/SHA256SUMS
+          gzip -9 -c out/fuxi-xnu-boot.img > out/fuxi-xnu-boot.img.gz
+          rm -f out/fuxi-xnu-boot.img
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adtboot-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/out/*
+          if-no-files-found: warn
+          retention-days: 14
