@@ -1,0 +1,51 @@
+name: scyx-tinyroot
+
+on:
+  workflow_dispatch:
+    inputs:
+      size:
+        description: HFS+ image size
+        default: 64M
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Host packages
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq hfsprogs
+      - name: Build a minimal HFS+ root
+        run: |
+          set -eux
+          rm -f root.img
+          truncate -s "${{ inputs.size }}" root.img
+          mkfs.hfsplus -J -v iOSRoot root.img
+          ls -l root.img
+          # Mount and drop a marker so the kernel's mount is observable.
+          mkdir -p mnt
+          sudo mount -t hfsplus -o loop root.img mnt
+          sudo mkdir -p mnt/sbin mnt/System mnt/private/var
+          echo "sweet-tiny-root" | sudo tee mnt/System/TINYROOT >/dev/null
+          sync
+          sudo umount mnt
+          gzip -9 -c root.img > root.img.gz
+          ls -l root.img.gz
+          sha256sum root.img
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tinyroot-${{ github.run_attempt }}
+          path: |
+            root.img.gz
+            root.img
+          if-no-files-found: warn
+          retention-days: 14
