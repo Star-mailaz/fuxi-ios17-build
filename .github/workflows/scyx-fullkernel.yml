@@ -1,0 +1,44 @@
+name: scyx-fullkernel
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: macos-15-intel
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: scyx2611/fuxi-ios
+          path: harness
+          fetch-depth: 0
+      - name: Show Xcodes
+        run: ls /Applications | grep -i xcode || true
+      - name: Build kernel-metal4 with the project's own script
+        working-directory: harness
+        env:
+          FUXI_IIG_MODE: replay
+        run: |
+          set -x
+          sudo xcode-select -s /Applications/Xcode_15.4.app 2>/dev/null || \
+          sudo xcode-select -s /Applications/Xcode_16.4.app 2>/dev/null || true
+          xcodebuild -version || true
+          bash tools/ci/build.sh kernel-metal4 2>&1 | tail -80
+      - name: Collect
+        if: always()
+        run: |
+          set +e
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp -r harness/tools/out/ci/kernel-metal4/* "$GITHUB_WORKSPACE/out/" 2>/dev/null
+          ls -lR "$GITHUB_WORKSPACE/out" | head -30
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fullkernel-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/out/*
+          if-no-files-found: warn
+          retention-days: 7
