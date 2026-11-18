@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   kernel:
-    runs-on: macos-15-intel
+    runs-on: macos-14
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
@@ -21,11 +21,11 @@ jobs:
       - name: Build kernel-metal4 with the project's own script
         working-directory: harness
         env:
-          FUXI_IIG_MODE: replay
+          FUXI_IIG_MODE: xcode
         run: |
           set -x
           sudo xcode-select -s /Applications/Xcode_15.4.app 2>/dev/null || \
-          sudo xcode-select -s /Applications/Xcode_16.4.app 2>/dev/null || true
+          sudo xcode-select -s /Applications/Xcode_15.3.app 2>/dev/null || true
           xcodebuild -version || true
           bash tools/ci/build.sh kernel-metal4 2>&1 | tail -80
       - name: Collect
