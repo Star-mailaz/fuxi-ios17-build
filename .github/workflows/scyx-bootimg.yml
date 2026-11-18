@@ -5,10 +5,10 @@ on:
     inputs:
       kernel_run:
         description: scyx-kernel run id that holds the artifact
-        default: "44190113829"
+        default: "44255762998"
       artifact:
         description: kernel artifact name
-        default: kernel-fuxi-1
+        default: macos-kernel-1
 
 permissions:
   contents: read
@@ -67,12 +67,9 @@ jobs:
           echo "kernel=$K"; echo "adt=$A"
           test -n "$K"; test -n "$A"
           C=$(find "$GITHUB_WORKSPACE/kernel" -name cmdline.txt | head -1)
-          # Put the kernel console on the panel so a failure is readable without the USB monitor.
-          if [ -n "$C" ]; then
-            sed -i 's/sweetfb_noconsole=1/sweetfb_noconsole=0/' "$C"
-            sed -i 's/^debug=0xc /-v debug=0x14e /' "$C"
-            echo "console cmdline: $(cat "$C")"
-          fi
+          # Keep the author's verified console args: sweetfb_noconsole=1 keeps kernel
+          # text off the GUI, still writes the persistent ring and DRAWS panics.
+          # 0 is not a documented value and disables the GPU scanout path.
           echo "cmdline=$C"
           if [ -n "$C" ]; then
             python3 ios-fuxi/tools/mkpayload.py "$K" "$A" "$GITHUB_WORKSPACE/payload" --cmdline "$(cat "$C")"
@@ -91,6 +88,12 @@ jobs:
           grep -n 'reserved = False' ios-fuxi/shim/fuxi-loader/build.sh
           # Ubuntu's clang predates this warning flag; the loader build must not fail on it.
           sed -i 's/ -Wno-error=unterminated-string-initialization//' ios-fuxi/shim/fuxi-loader/build.sh
+          # Standalone launch. Without this the loader sits in its USB probe loop waiting
+          # for a PC monitor vendor request and reboots at the 90 s deadline: measured on
+          # device as 87 s of black screen, then HyperOS. With the delay defined it does
+          # what fuxi-xnu-monitor.py does (CPU_ON cpu@100, move USB there, launch XNU).
+          sed -i 's/-DFUXI_XNU_LOADER=1/-DFUXI_XNU_LOADER=1 -DFUXI_AUTO_LAUNCH_S=20/' ios-fuxi/shim/fuxi-loader/build.sh
+          grep -c 'FUXI_AUTO_LAUNCH_S=20' ios-fuxi/shim/fuxi-loader/build.sh
           clang --version | head -1
           cd ios-fuxi/shim/fuxi-loader
           CLANG=clang LLD=ld.lld OBJCOPY=llvm-objcopy READELF=llvm-readelf MKBOOTIMG="$MK" \
