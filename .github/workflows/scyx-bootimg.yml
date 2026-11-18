@@ -71,6 +71,9 @@ jobs:
           MK="$GITHUB_WORKSPACE/scyx/ios-fuxi/uefi-fuxi/Resources/Scripts/mkbootimg.py"
           [ -f "$MK" ] || MK=$(find "$GITHUB_WORKSPACE/scyx" -name mkbootimg.py | head -1)
           echo "mkbootimg=$MK"
+          # The 9g layout (9184 MiB at 0x8c0000000) is current; this guard predates it.
+          sed -i 's/(0x40000000, 0x13e000000)/(0x30000000, 0x40000000, 0x13e000000, 0x23e000000)/' ios-fuxi/shim/fuxi-loader/build.sh
+          grep -n '0x23e000000' ios-fuxi/shim/fuxi-loader/build.sh
           cd ios-fuxi/shim/fuxi-loader
           CLANG=clang LLD=ld.lld OBJCOPY=llvm-objcopy READELF=llvm-readelf MKBOOTIMG="$MK" \
             FUXI_GMU_FIRMWARE="$GITHUB_WORKSPACE/fw/gmu_gen70200.bin" \
