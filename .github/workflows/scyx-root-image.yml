@@ -1,0 +1,117 @@
+name: scyx-root-image
+
+on:
+  workflow_dispatch:
+    inputs:
+      size:
+        description: HFS+ image size
+        default: 16G
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - name: Disk
+        run: |
+          df -h /; nproc; free -g | head -2
+
+      - name: Check out the project
+        uses: actions/checkout@v4
+        with:
+          repository: scyx2611/fuxi-ios
+          path: harness
+          persist-credentials: false
+
+      - name: Host packages
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libfsapfs-dev libfuse3-dev cmake gcc g++ make pkg-config \
+            zlib1g-dev libbz2-dev libssl-dev hfsprogs fuse3 rsync zstd unzip curl python3
+
+      - name: Build apfs-fuse
+        run: |
+          set -eux
+          sudo git clone --depth 1 https://github.com/sgan81/apfs-fuse.git /opt/apfs-fuse
+          sudo cmake -S /opt/apfs-fuse -B /opt/apfs-fuse/build -DCMAKE_BUILD_TYPE=Release
+          sudo cmake --build /opt/apfs-fuse/build -j4
+          sudo find /opt/apfs-fuse/build -name apfs-fuse -type f -executable
+          sudo ln -sf "$(sudo find /opt/apfs-fuse/build -name apfs-fuse -type f | head -1)" /usr/local/bin/apfs-fuse
+          apfs-fuse --help | head -5 || true
+
+      - name: Download the IPSW
+        run: |
+          set -eux
+          curl -sSL --retry 3 -o ipsw.zip \
+            "https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw"
+          ls -l ipsw.zip
+          mkdir -p ipsw && unzip -o -q ipsw.zip -d ipsw "*.dmg" "BuildManifest.plist" "Restore.plist"
+          rm -f ipsw.zip
+          ls -l ipsw
+          df -h /
+
+      - name: Map the dmgs
+        run: |
+          python3 - <<PY
+import plistlib, pathlib
+bm = plistlib.load(open("ipsw/BuildManifest.plist","rb"))
+roles = {}
+for bi in bm["BuildIdentities"]:
+    m = bi.get("Manifest", {})
+    for key in ("OS","SystemOS","AppOS"):
+        if key in m and "Info" in m[key]:
+            roles.setdefault(key, m[key]["Info"].get("Path"))
+for k, v in roles.items():
+    print(k, "=", v)
+out = []
+for k in ("OS","SystemOS","AppOS"):
+    out.append(roles.get(k) or "")
+pathlib.Path("roles.txt").write_text("\n".join(out))
+print(open("roles.txt").read())
+PY
+          cat roles.txt
+
+      - name: Build the HFS+ root image
+        run: |
+          set -eux
+          OS=$(sed -n 1p roles.txt); SYS=$(sed -n 2p roles.txt); APP=$(sed -n 3p roles.txt)
+          ls -l "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP"
+          sudo bash harness/ios-fuxi/tools/mkiosroot.sh "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP" "$PWD/iOSRoot.img" "${{ inputs.size }}" 2>&1 | tail -60
+          ls -lh iOSRoot.img
+          sha256sum iOSRoot.img
+          df -h /
+
+      - name: Compress and checksum
+        run: |
+          set -eux
+          zstd -T0 -19 --long=27 -o iOSRoot.img.zst iOSRoot.img
+          ls -lh iOSRoot.img iOSRoot.img.zst
+          sha256sum iOSRoot.img iOSRoot.img.zst > SHA256SUMS
+          cat SHA256SUMS
+          rm -f iOSRoot.img
+
+      - name: Collect
+        if: always()
+        run: |
+          set +e
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp iOSRoot.img.zst SHA256SUMS "$GITHUB_WORKSPACE/out/" 2>/dev/null
+          cp roles.txt "$GITHUB_WORKSPACE/out/" 2>/dev/null
+          ls -l "$GITHUB_WORKSPACE/out"
+          df -h /
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: iosroot-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/out/*
+          if-no-files-found: warn
+          retention-days: 7
