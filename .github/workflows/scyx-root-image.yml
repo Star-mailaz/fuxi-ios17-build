@@ -60,29 +60,22 @@ jobs:
 
       - name: Map the dmgs
         run: |
-          python3 - <<PY
-import plistlib, pathlib
-bm = plistlib.load(open("ipsw/BuildManifest.plist","rb"))
-roles = {}
-for bi in bm["BuildIdentities"]:
-    m = bi.get("Manifest", {})
-    for key in ("OS","SystemOS","AppOS"):
-        if key in m and "Info" in m[key]:
-            roles.setdefault(key, m[key]["Info"].get("Path"))
-for k, v in roles.items():
-    print(k, "=", v)
-out = []
-for k in ("OS","SystemOS","AppOS"):
-    out.append(roles.get(k) or "")
-pathlib.Path("roles.txt").write_text("\n".join(out))
-print(open("roles.txt").read())
-PY
-          cat roles.txt
-
+          set -eux
+          python3 -c "import plistlib;bm=plistlib.load(open('ipsw/BuildManifest.plist','rb'));r={};[r.setdefault(k,b[m]['Info']['Path']) for b in bm['BuildIdentities'] for m in [b.get('Manifest',{})] for k in ('OS','SystemOS','AppOS') if k in m and 'Info' in m[k]];print('\n'.join(k+'='+str(v) for k,v in r.items()))" | tee roles.txt
+          ls -S ipsw/*.dmg
       - name: Build the HFS+ root image
         run: |
           set -eux
-          OS=$(sed -n 1p roles.txt); SYS=$(sed -n 2p roles.txt); APP=$(sed -n 3p roles.txt)
+          pick() { if [ -n "$1" ] && [ -f "ipsw/$1" ]; then echo "$1"; fi; }
+          OS=$(pick "$(grep '^OS=' roles.txt | cut -d= -f2- || true)")
+          SYS=$(pick "$(grep '^SystemOS=' roles.txt | cut -d= -f2- || true)")
+          APP=$(pick "$(grep '^AppOS=' roles.txt | cut -d= -f2- || true)")
+          if [ -z "$OS" ] || [ -z "$SYS" ] || [ -z "$APP" ]; then
+            SYS=$(basename "$(ls -S ipsw/*.dmg | head -1)")
+            OS=$(basename "$(ls -S ipsw/*.dmg | head -2 | tail -1)")
+            APP=$(basename "$(ls -S ipsw/*.dmg | head -3 | tail -1)")
+          fi
+          echo "OS=$OS SYS=$SYS APP=$APP"
           ls -l "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP"
           sudo bash harness/ios-fuxi/tools/mkiosroot.sh "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP" "$PWD/iOSRoot.img" "${{ inputs.size }}" 2>&1 | tail -60
           ls -lh iOSRoot.img
