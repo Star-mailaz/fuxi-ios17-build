@@ -84,7 +84,16 @@ jobs:
           echo "picked: OS=$OS SYS=$SYS APP=$APP"
           ls -l "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP"
           sudo bash harness/ios-fuxi/tools/mkiosroot.sh "ipsw/$OS" "ipsw/$SYS" "ipsw/$APP" "$PWD/iOSRoot.img" "${{ inputs.size }}" 2>&1 | tail -40
-          ls -lh iOSRoot.img; sha256sum iOSRoot.img
+          ls -lh iOSRoot.img
+          # Exact ios-sweet procedure: fsck, mount, apply the bring-up tweaks, unmount.
+          sudo fsck.hfsplus -fy iOSRoot.img || true
+          sudo mkdir -p /mnt/iosroot
+          sudo mount -t hfsplus -o loop,force iOSRoot.img /mnt/iosroot
+          sudo python3 harness/ios-fuxi/tools/sweet-root-tweaks.py /mnt/iosroot
+          sudo umount /mnt/iosroot
+          sudo fsck.hfsplus -fy iOSRoot.img || true
+          img2simg iOSRoot.img iOSRoot.simg && ls -lh iOSRoot.simg
+          sha256sum iOSRoot.img
       - name: Compress and split
         run: |
           set -eux
