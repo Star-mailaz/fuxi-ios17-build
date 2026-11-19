@@ -1,0 +1,12 @@
+name: scyx-macos-probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: Hello
+        run: uname -a; xcodebuild -version; ls /Applications | grep -i xcode || true
