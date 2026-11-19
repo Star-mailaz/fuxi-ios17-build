@@ -11,6 +11,9 @@ on:
         default: "44255762998"
       artifact:
         default: macos-kernel-1
+      cmdline:
+        description: kernel command line override (<=600 bytes, empty = artifact cmdline.txt)
+        default: ""
 
 permissions:
   contents: read
@@ -85,7 +88,10 @@ jobs:
           if total != blocks:
               raise SystemExit('extents do not cover the whole image')
           PY
-          python3 ios-fuxi/tools/mkpayload.py "$K" fuxi-ext.adt "$GITHUB_WORKSPACE/payload" --cmdline "$(cat "$C")"
+          CMD="${{ inputs.cmdline }}"
+          if [ -z "$CMD" ]; then CMD="$(cat "$C")"; fi
+          printf 'cmdline (%s bytes): %s\n' "${#CMD}" "$CMD"
+          python3 ios-fuxi/tools/mkpayload.py "$K" fuxi-ext.adt "$GITHUB_WORKSPACE/payload" --cmdline "$CMD"
           ls -l "$GITHUB_WORKSPACE/payload"
       - name: Build the loader and the boot image
         working-directory: scyx
