@@ -1,0 +1,11 @@
+name: scyx-probe2
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - run: uname -a
